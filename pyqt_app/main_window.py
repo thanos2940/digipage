@@ -12,6 +12,8 @@ import os
 import time
 from PIL import Image
 
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
+
 class MainWindow(QMainWindow):
     def __init__(self, settings, parent=None):
         super().__init__(parent)
