@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
         # self.setup_workers() # Temporarily disabled for debugging
-        self.initial_scan()
+        # self.initial_scan() # Temporarily disabled for debugging
 
     def setup_ui(self):
         # --- Central Widget and Main Layout ---
