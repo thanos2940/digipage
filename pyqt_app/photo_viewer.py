@@ -1,5 +1,6 @@
 import sys
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QApplication, QFrame, QVBoxLayout, QPushButton
+import time
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, QRectF
 from PIL import Image
@@ -29,23 +30,38 @@ class PhotoViewer(QGraphicsView):
         self.crop_rect_item = None
         self.handle_drag_info = {}
 
-    def set_image(self, path: str):
-        """Load and display an image from a file path using Pillow."""
-        try:
-            self.image_path = path
-            self.pil_image = Image.open(path)
+    def set_image(self, path: str, timeout_ms=2000):
+        """
+        Load and display an image from a file path using Pillow, with a retry mechanism.
+        """
+        self.clear() # Clear previous image first
+        self.image_path = path
 
-            pixmap = pil_to_qpixmap(self.pil_image)
+        retry_delay_ms = 50
+        max_retries = int(timeout_ms / retry_delay_ms) if timeout_ms > 0 else 1
 
-            if pixmap.isNull():
-                self._pixmap_item.setPixmap(QPixmap())
-                return
+        for i in range(max_retries):
+            try:
+                # Try to open and verify the image
+                img_temp = Image.open(path)
+                img_temp.verify()
 
-            self._pixmap_item.setPixmap(pixmap)
-            self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
-        except Exception as e:
-            print(f"Error loading image {path}: {e}")
-            self.clear()
+                # If verify() is successful, re-open the image to work with it
+                self.pil_image = Image.open(path)
+                pixmap = pil_to_qpixmap(self.pil_image)
+
+                if not pixmap.isNull():
+                    self._pixmap_item.setPixmap(pixmap)
+                    self.fit_view()
+                    return # Success
+            except Exception as e:
+                # If it fails, wait and retry
+                print(f"Attempt {i+1} failed for {path}: {e}. Retrying...")
+                time.sleep(retry_delay_ms / 1000)
+
+        # If all retries fail, print an error and ensure the view is clear
+        print(f"Error loading image {path} after {timeout_ms}ms. Could not identify image file.")
+        self.clear()
 
 
     def clear(self):
