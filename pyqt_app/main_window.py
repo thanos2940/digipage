@@ -304,7 +304,7 @@ class MainWindow(QMainWindow):
                 viewer.toggle_crop_mode() # Destructive action, so turn off mode.
         else:
             # Check if there are any edits to save
-            if viewer.rotation_angle != 0 or viewer.brightness != 1.0 or viewer.contrast != 1.0:
+            if viewer.base_rotation != 0 or viewer.fine_rotation != 0 or viewer.brightness != 1.0 or viewer.contrast != 1.0:
                 edited_image = viewer.get_edited_image()
 
         if edited_image:
@@ -389,7 +389,7 @@ class MainWindow(QMainWindow):
         contrast_layout.addWidget(contrast_slider)
         sliders_layout.addLayout(contrast_layout)
 
-        # Rotation Slider
+        # Fine Rotation Slider
         rotation_layout = QHBoxLayout()
         rotation_label = QLabel("Rotate:")
         rotation_slider = QSlider(Qt.Orientation.Horizontal)
@@ -407,12 +407,16 @@ class MainWindow(QMainWindow):
         save_btn = QPushButton("Save")
         toggle_crop_btn = QPushButton("Crop")
         restore_btn = QPushButton("Restore")
+        rot_left_btn = QPushButton("⟲ 90°")
+        rot_right_btn = QPushButton("⟳ 90°")
         delete_btn = QPushButton("Delete")
         delete_btn.setStyleSheet("background-color: #dc3545;")
 
         buttons_layout.addWidget(save_btn)
         buttons_layout.addWidget(toggle_crop_btn)
         buttons_layout.addWidget(restore_btn)
+        buttons_layout.addWidget(rot_left_btn)
+        buttons_layout.addWidget(rot_right_btn)
         buttons_layout.addStretch()
         buttons_layout.addWidget(delete_btn)
         pane_layout.addLayout(buttons_layout)
@@ -420,10 +424,12 @@ class MainWindow(QMainWindow):
         # --- Connections ---
         brightness_slider.valueChanged.connect(lambda value, v=viewer_widget: v.set_brightness(value / 100.0))
         contrast_slider.valueChanged.connect(lambda value, v=viewer_widget: v.set_contrast(value / 100.0))
-        rotation_slider.valueChanged.connect(lambda value, v=viewer_widget: v.rotate_image(value))
+        rotation_slider.valueChanged.connect(lambda value, v=viewer_widget: v.set_fine_rotation(value))
 
         toggle_crop_btn.clicked.connect(viewer_widget.toggle_crop_mode)
         save_btn.clicked.connect(lambda: self.save_image(viewer_widget))
+        rot_left_btn.clicked.connect(lambda: viewer_widget.add_base_rotation(90))
+        rot_right_btn.clicked.connect(lambda: viewer_widget.add_base_rotation(-90))
 
         def restore_and_reset_sliders():
             viewer_widget.restore_original()

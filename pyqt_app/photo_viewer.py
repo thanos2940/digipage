@@ -25,7 +25,8 @@ class PhotoViewer(QGraphicsView):
 
         self.image_path = None
         self.pil_image = None # This will hold the original, unmodified PIL image
-        self.rotation_angle = 0
+        self.base_rotation = 0
+        self.fine_rotation = 0
         self.brightness = 1.0
         self.contrast = 1.0
 
@@ -62,7 +63,8 @@ class PhotoViewer(QGraphicsView):
         """Clears the view and resets all edits."""
         self._pixmap_item.setPixmap(QPixmap())
         self.image_path = None
-        self.rotation_angle = 0
+        self.base_rotation = 0
+        self.fine_rotation = 0
         self.brightness = 1.0
         self.contrast = 1.0
         if self.pil_image:
@@ -89,10 +91,11 @@ class PhotoViewer(QGraphicsView):
             processed_image = enhancer.enhance(self.contrast)
 
         # Apply rotation after other enhancements
-        if self.rotation_angle != 0:
+        total_rotation = self.base_rotation + self.fine_rotation
+        if total_rotation != 0:
             img_to_rotate = processed_image if processed_image is not self.pil_image else self.pil_image
             processed_image = img_to_rotate.rotate(
-                self.rotation_angle,
+                total_rotation,
                 resample=Image.Resampling.BICUBIC,
                 expand=True
             )
@@ -122,16 +125,24 @@ class PhotoViewer(QGraphicsView):
         self.contrast = factor
         self._update_display_image()
 
-    def rotate_image(self, angle_degrees: float):
-        """Sets the rotation angle and updates the view."""
+    def set_fine_rotation(self, angle_degrees: float):
+        """Sets the fine rotation angle (from slider) and updates the view."""
         if not self.pil_image:
             return
-        self.rotation_angle = angle_degrees
+        self.fine_rotation = angle_degrees
+        self._update_display_image()
+
+    def add_base_rotation(self, angle_degrees: float):
+        """Adds a value to the base rotation (from buttons) and updates the view."""
+        if not self.pil_image:
+            return
+        self.base_rotation = (self.base_rotation + angle_degrees) % 360
         self._update_display_image()
 
     def restore_original(self):
         """Resets all edits to their default values and updates the view."""
-        self.rotation_angle = 0
+        self.base_rotation = 0
+        self.fine_rotation = 0
         self.brightness = 1.0
         self.contrast = 1.0
         self._update_display_image()
