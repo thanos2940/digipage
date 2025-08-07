@@ -10,6 +10,7 @@ from .crop_rect_item import CropRectItem
 class PhotoViewer(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
+        print(f"[PhotoViewer] Initializing instance {id(self)}...")
         self._scene = QGraphicsScene(self)
         self._pixmap_item = QGraphicsPixmapItem()
         self._scene.addItem(self._pixmap_item)

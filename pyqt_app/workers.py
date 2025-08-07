@@ -46,18 +46,22 @@ class WatchdogWorker(QObject):
 
     def run(self):
         """Starts the watchdog observer."""
+        print("[WatchdogWorker] Thread started.")
         handler = NewImageHandler(self.new_image_found.emit)
         self.observer.schedule(handler, self.scan_directory, recursive=False)
         self.observer.start()
+        print(f"[WatchdogWorker] Monitoring directory: {self.scan_directory}")
 
         while not self._stop_event.is_set():
             time.sleep(0.5)
 
         self.observer.stop()
         self.observer.join()
+        print("[WatchdogWorker] Thread stopped.")
 
     def stop(self):
         """Signals the run loop to exit."""
+        print("[WatchdogWorker] stop() called.")
         self._stop_event.set()
 
 
@@ -80,12 +84,15 @@ class StatsWorker(QObject):
         self.scan_timestamps = deque()
 
     def run(self):
+        print("[StatsWorker] Thread started.")
         self._is_running = True
         while self._is_running:
             self._calculate_stats()
             time.sleep(2) # Update stats every 2 seconds
+        print("[StatsWorker] Thread stopped.")
 
     def stop(self):
+        print("[StatsWorker] stop() called.")
         self._is_running = False
 
     def _count_pages_in_folder(self, folder_path):
@@ -155,19 +162,28 @@ class InitialScanWorker(QObject):
 
     def run(self):
         """Scans the directory and emits the result."""
+        print("[InitialScanWorker] Thread started.")
         try:
-            from utils import natural_sort_key
+            print(f"[InitialScanWorker] Scanning directory: {self.scan_directory}")
+            from .utils import natural_sort_key
             image_files = [
                 os.path.join(self.scan_directory, f)
                 for f in os.listdir(self.scan_directory)
                 if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
             ]
+            print(f"[InitialScanWorker] Found {len(image_files)} initial files.")
             image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
             self.scan_complete.emit(image_files)
+            print("[InitialScanWorker] scan_complete signal emitted.")
         except FileNotFoundError:
-            self.scan_error.emit(f"Scan directory not found: {self.scan_directory}")
+            error_msg = f"Scan directory not found: {self.scan_directory}"
+            print(f"[InitialScanWorker] ERROR: {error_msg}")
+            self.scan_error.emit(error_msg)
         except Exception as e:
-            self.scan_error.emit(f"An error occurred during initial scan: {e}")
+            error_msg = f"An error occurred during initial scan: {e}"
+            print(f"[InitialScanWorker] ERROR: {error_msg}")
+            self.scan_error.emit(error_msg)
+        print("[InitialScanWorker] Thread finished.")
 
 class FileOperationWorker(QObject):
     """
