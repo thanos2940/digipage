@@ -1,23 +1,44 @@
 import sys
+import traceback
 from PyQt6.QtWidgets import QApplication
 from pyqt_app.settings_dialog import SettingsDialog
 from pyqt_app.main_window import MainWindow
 
 def main():
-    app = QApplication(sys.argv)
+    try:
+        print("[main] Application starting.")
+        app = QApplication(sys.argv)
+        print("[main] QApplication instance created.")
 
-    # Show settings dialog first
-    settings_dialog = SettingsDialog()
-    if not settings_dialog.exec():
-        sys.exit(0) # Exit if user cancels settings
+        # Show settings dialog first
+        print("[main] Creating SettingsDialog.")
+        settings_dialog = SettingsDialog()
+        print("[main] Showing SettingsDialog.")
 
-    settings = settings_dialog.get_settings()
+        if not settings_dialog.exec():
+            print("[main] SettingsDialog cancelled by user. Exiting.")
+            sys.exit(0) # Exit if user cancels settings
 
-    # If settings are accepted, show the main window
-    main_window = MainWindow(settings)
-    main_window.show()
+        print("[main] SettingsDialog accepted.")
+        settings = settings_dialog.get_settings()
+        print(f"[main] Settings loaded: {settings}")
 
-    sys.exit(app.exec())
+        # If settings are accepted, show the main window
+        print("[main] Creating MainWindow.")
+        main_window = MainWindow(settings)
+        print("[main] Showing MainWindow.")
+        main_window.show()
+
+        print("[main] Starting application event loop.")
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        with open("crash_log.txt", "w") as f:
+            f.write(f"Unhandled exception: {e}\\n")
+            f.write(traceback.format_exc())
+        print("A crash log has been written to crash_log.txt")
+        sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

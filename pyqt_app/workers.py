@@ -46,9 +46,11 @@ class WatchdogWorker(QObject):
 
     def run(self):
         """Starts the watchdog observer."""
+        print("[WatchdogWorker] Thread started.")
         handler = NewImageHandler(self.new_image_found.emit)
         self.observer.schedule(handler, self.scan_directory, recursive=False)
         self.observer.start()
+        print(f"[WatchdogWorker] Monitoring directory: {self.scan_directory}")
 
         # Keep the thread alive until stop() is called
         while not self._stop_event.is_set():
@@ -56,9 +58,11 @@ class WatchdogWorker(QObject):
 
         self.observer.stop()
         self.observer.join()
+        print("[WatchdogWorker] Thread stopped.")
 
     def stop(self):
         """Signals the run loop to exit."""
+        print("[WatchdogWorker] stop() called.")
         self._stop_event.set()
 
 
@@ -81,12 +85,15 @@ class StatsWorker(QObject):
         self.scan_timestamps = deque()
 
     def run(self):
+        print("[StatsWorker] Thread started.")
         self._is_running = True
         while self._is_running:
             self._calculate_stats()
             time.sleep(2) # Update stats every 2 seconds
+        print("[StatsWorker] Thread stopped.")
 
     def stop(self):
+        print("[StatsWorker] stop() called.")
         self._is_running = False
 
     def _count_pages_in_folder(self, folder_path):
