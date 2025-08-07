@@ -234,6 +234,15 @@ class FileOperationWorker(QObject):
                 message = f"Deleted: {', '.join(deleted_names)}"
                 self.operation_successful.emit(operation_type, message)
 
+            elif operation_type == 'delete_single_image':
+                file_to_delete = data['file_to_delete']
+                if os.path.exists(file_to_delete):
+                    message = f"Deleted: {os.path.basename(file_to_delete)}"
+                    os.remove(file_to_delete)
+                    self.operation_successful.emit(operation_type, message)
+                else:
+                    self.operation_failed.emit(operation_type, f"File not found: {os.path.basename(file_to_delete)}")
+
 
         except Exception as e:
             self.operation_failed.emit(operation_type, str(e))

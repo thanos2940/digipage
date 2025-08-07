@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QGroupBox, QFrame, QMessageBox, QListWidget, QLineEdit
+    QLabel, QPushButton, QGroupBox, QFrame, QMessageBox, QListWidget, QLineEdit, QSlider
 )
 from PyQt6.QtCore import Qt, QThread, QTimer
 from .styles import DARK_STYLE_SHEET
@@ -134,7 +134,8 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'stats_worker'):
                 self.stats_worker.scan_timestamps.append(time.time())
 
-            self.update_display()
+            # Automatically navigate to the end to show the new image
+            self.jump_to_end()
 
     def update_display(self):
         """Updates the image viewers to show the current pair."""
@@ -178,11 +179,26 @@ class MainWindow(QMainWindow):
             self.update_display()
             # We should also trigger a refresh of the "Today's Books" list
         elif op_type == "delete_pair":
-            # This is tricky because the worker deleted the files, we need to resync our list
-            # A simple approach is to re-scan the directory
-            self.image_files = [f for f in self.image_files if os.path.exists(f)]
+            # Remove the deleted files from our list based on the pending list, not by checking existence (to avoid race conditions)
+            if hasattr(self, 'files_pending_deletion'):
+                self.image_files = [f for f in self.image_files if f not in self.files_pending_deletion]
+                del self.files_pending_deletion
+
+            # If the current index is now out of bounds (e.g., we deleted the last pair), move it to the new last pair.
             if self.current_index >= len(self.image_files):
                 self.current_index = max(0, len(self.image_files) - 2)
+
+            # Ensure index is always even after a deletion, so we always show a pair starting from the left.
+            if self.current_index % 2 != 0 and self.current_index > 0:
+                self.current_index -= 1
+
+            self.update_display()
+
+        elif op_type == "delete_single_image":
+            if hasattr(self, 'file_pending_deletion'):
+                self.image_files = [f for f in self.image_files if f != self.file_pending_deletion]
+                del self.file_pending_deletion
+            # The current index remains the same, the display will update to show the next image in the sequence.
             self.update_display()
 
     def _on_operation_failed(self, op_type, error_message):
@@ -270,6 +286,8 @@ class MainWindow(QMainWindow):
                                      QMessageBox.StandardButton.No)
 
         if reply == QMessageBox.StandardButton.Yes:
+            # Store the list of files to be deleted. The success handler will use this to update the list.
+            self.files_pending_deletion = files_to_delete
             self.file_op_worker.run_operation(
                 'delete_pair',
                 {'files_to_delete': files_to_delete}
@@ -281,25 +299,41 @@ class MainWindow(QMainWindow):
 
         edited_image = None
         if viewer.is_crop_mode:
-            # This is a destructive action, so turn off crop mode after
             edited_image = viewer.apply_crop()
-            viewer.toggle_crop_mode()
-        elif viewer.rotation_angle != 0:
-            edited_image = viewer.pil_image.rotate(
-                viewer.rotation_angle,
-                resample=Image.Resampling.BICUBIC,
-                expand=True
-            )
+            if edited_image:
+                viewer.toggle_crop_mode() # Destructive action, so turn off mode.
+        else:
+            # Check if there are any edits to save
+            if viewer.rotation_angle != 0 or viewer.brightness != 1.0 or viewer.contrast != 1.0:
+                edited_image = viewer.get_edited_image()
 
         if edited_image:
-            # This needs to be thread-safe if the worker uses the object directly
-            # For now, we assume the worker will handle it immediately
             self.file_op_worker.run_operation(
                 'save_image',
                 {'path': viewer.image_path, 'image_obj': edited_image}
             )
         else:
             self.statusBar().showMessage("No edits to save.", 3000)
+
+    def delete_single_image(self, viewer: PhotoViewer):
+        """Handles the logic for deleting a single image."""
+        if not viewer.image_path:
+            return
+
+        file_to_delete = viewer.image_path
+
+        reply = QMessageBox.question(self, 'Confirm Deletion',
+                                     f"Are you sure you want to permanently delete:\\n{os.path.basename(file_to_delete)}?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Store the file to be deleted. The success handler will use this to update the list.
+            self.file_pending_deletion = file_to_delete
+            self.file_op_worker.run_operation(
+                'delete_single_image',
+                {'file_to_delete': file_to_delete}
+            )
 
 
     # --- Navigation Slots ---
@@ -323,37 +357,83 @@ class MainWindow(QMainWindow):
     def _create_image_pane(self, viewer_widget):
         """Creates a container for a PhotoViewer and its controls."""
         pane_frame = QFrame()
-        layout = QVBoxLayout(pane_frame)
-        layout.setContentsMargins(0,0,0,0)
-        layout.setSpacing(5)
+        pane_layout = QVBoxLayout(pane_frame)
+        pane_layout.setContentsMargins(0, 0, 0, 0)
+        pane_layout.setSpacing(5)
 
-        layout.addWidget(viewer_widget, 1) # Viewer gets the stretch factor
+        pane_layout.addWidget(viewer_widget, 1)
 
-        # Placeholder for controls for now
-        controls_frame = QFrame()
-        # In a real app, you'd populate this with actual controls
-        controls_layout = QHBoxLayout(controls_frame)
+        # --- Sliders for Editing ---
+        sliders_group = QGroupBox("Adjustments")
+        sliders_layout = QVBoxLayout(sliders_group)
 
-        save_btn = QPushButton("Save Edits")
-        toggle_crop_btn = QPushButton("Toggle Crop")
-        restore_btn = QPushButton("Restore Original")
-        rot_left_btn = QPushButton("⟲")
-        rot_right_btn = QPushButton("⟳")
+        # Brightness Slider
+        brightness_layout = QHBoxLayout()
+        brightness_label = QLabel("Brightness:")
+        brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        brightness_slider.setRange(50, 150)
+        brightness_slider.setValue(100)
+        brightness_slider.setToolTip("Adjust image brightness")
+        brightness_layout.addWidget(brightness_label)
+        brightness_layout.addWidget(brightness_slider)
+        sliders_layout.addLayout(brightness_layout)
 
-        controls_layout.addWidget(save_btn)
-        controls_layout.addWidget(toggle_crop_btn)
-        controls_layout.addWidget(restore_btn)
-        controls_layout.addStretch()
-        controls_layout.addWidget(rot_left_btn)
-        controls_layout.addWidget(rot_right_btn)
+        # Contrast Slider
+        contrast_layout = QHBoxLayout()
+        contrast_label = QLabel("Contrast:")
+        contrast_slider = QSlider(Qt.Orientation.Horizontal)
+        contrast_slider.setRange(50, 150)
+        contrast_slider.setValue(100)
+        contrast_slider.setToolTip("Adjust image contrast")
+        contrast_layout.addWidget(contrast_label)
+        contrast_layout.addWidget(contrast_slider)
+        sliders_layout.addLayout(contrast_layout)
 
-        # --- Connect Control Signals ---
-        rot_left_btn.clicked.connect(lambda: viewer_widget.rotate_image(90))
-        rot_right_btn.clicked.connect(lambda: viewer_widget.rotate_image(-90))
+        # Rotation Slider
+        rotation_layout = QHBoxLayout()
+        rotation_label = QLabel("Rotate:")
+        rotation_slider = QSlider(Qt.Orientation.Horizontal)
+        rotation_slider.setRange(-30, 30)
+        rotation_slider.setValue(0)
+        rotation_slider.setToolTip("Rotate image up to 30 degrees")
+        rotation_layout.addWidget(rotation_label)
+        rotation_layout.addWidget(rotation_slider)
+        sliders_layout.addLayout(rotation_layout)
+
+        pane_layout.addWidget(sliders_group)
+
+        # --- Action Buttons ---
+        buttons_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        toggle_crop_btn = QPushButton("Crop")
+        restore_btn = QPushButton("Restore")
+        delete_btn = QPushButton("Delete")
+        delete_btn.setStyleSheet("background-color: #dc3545;")
+
+        buttons_layout.addWidget(save_btn)
+        buttons_layout.addWidget(toggle_crop_btn)
+        buttons_layout.addWidget(restore_btn)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(delete_btn)
+        pane_layout.addLayout(buttons_layout)
+
+        # --- Connections ---
+        brightness_slider.valueChanged.connect(lambda value, v=viewer_widget: v.set_brightness(value / 100.0))
+        contrast_slider.valueChanged.connect(lambda value, v=viewer_widget: v.set_contrast(value / 100.0))
+        rotation_slider.valueChanged.connect(lambda value, v=viewer_widget: v.rotate_image(value))
+
         toggle_crop_btn.clicked.connect(viewer_widget.toggle_crop_mode)
         save_btn.clicked.connect(lambda: self.save_image(viewer_widget))
 
-        layout.addWidget(controls_frame)
+        def restore_and_reset_sliders():
+            viewer_widget.restore_original()
+            brightness_slider.setValue(100)
+            contrast_slider.setValue(100)
+            rotation_slider.setValue(0)
+        restore_btn.clicked.connect(restore_and_reset_sliders)
+
+        delete_btn.clicked.connect(lambda: self.delete_single_image(viewer_widget))
+
 
         return pane_frame
 

@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
 import time
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, QRectF
-from PIL import Image
+from PIL import Image, ImageEnhance
 from .utils import pil_to_qpixmap
 from .crop_rect_item import CropRectItem
 
@@ -24,8 +24,10 @@ class PhotoViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
         self.image_path = None
-        self.pil_image = None
+        self.pil_image = None # This will hold the original, unmodified PIL image
         self.rotation_angle = 0
+        self.brightness = 1.0
+        self.contrast = 1.0
 
         self.is_crop_mode = False
         self.crop_rect_item = None
@@ -35,7 +37,7 @@ class PhotoViewer(QGraphicsView):
         """
         Load and display an image from a file path using Pillow, with a retry mechanism.
         """
-        self.clear() # Clear previous image first
+        self.clear()
         self.image_path = path
 
         retry_delay_ms = 50
@@ -43,33 +45,26 @@ class PhotoViewer(QGraphicsView):
 
         for i in range(max_retries):
             try:
-                # Try to open and verify the image
                 img_temp = Image.open(path)
                 img_temp.verify()
-
-                # If verify() is successful, re-open the image to work with it
                 self.pil_image = Image.open(path)
-                pixmap = pil_to_qpixmap(self.pil_image)
-
-                if not pixmap.isNull():
-                    self._pixmap_item.setPixmap(pixmap)
-                    self.fit_view()
-                    return # Success
+                self._update_display_image()
+                self.fit_view()
+                return
             except Exception as e:
-                # If it fails, wait and retry
                 print(f"Attempt {i+1} failed for {path}: {e}. Retrying...")
                 time.sleep(retry_delay_ms / 1000)
 
-        # If all retries fail, print an error and ensure the view is clear
         print(f"Error loading image {path} after {timeout_ms}ms. Could not identify image file.")
         self.clear()
 
-
     def clear(self):
-        """Clears the view."""
+        """Clears the view and resets all edits."""
         self._pixmap_item.setPixmap(QPixmap())
         self.image_path = None
         self.rotation_angle = 0
+        self.brightness = 1.0
+        self.contrast = 1.0
         if self.pil_image:
             self.pil_image.close()
             self.pil_image = None
@@ -79,27 +74,79 @@ class PhotoViewer(QGraphicsView):
         pixmap = pil_to_qpixmap(pil_img)
         self._pixmap_item.setPixmap(pixmap)
 
-    def rotate_image(self, angle_degrees: float):
-        """Rotates the displayed image by the given angle."""
+    def _get_processed_image(self):
+        """Applies all current edits to the base image and returns a new PIL image."""
         if not self.pil_image:
+            return None
+
+        processed_image = self.pil_image
+        # Apply brightness/contrast only if they are not default
+        if self.brightness != 1.0:
+            enhancer = ImageEnhance.Brightness(processed_image)
+            processed_image = enhancer.enhance(self.brightness)
+        if self.contrast != 1.0:
+            enhancer = ImageEnhance.Contrast(processed_image)
+            processed_image = enhancer.enhance(self.contrast)
+
+        # Apply rotation after other enhancements
+        if self.rotation_angle != 0:
+            img_to_rotate = processed_image if processed_image is not self.pil_image else self.pil_image
+            processed_image = img_to_rotate.rotate(
+                self.rotation_angle,
+                resample=Image.Resampling.BICUBIC,
+                expand=True
+            )
+
+        return processed_image
+
+    def _update_display_image(self):
+        """Gets the processed image and updates the view."""
+        if not self.pil_image:
+            self._pixmap_item.setPixmap(QPixmap())
             return
 
-        self.rotation_angle = (self.rotation_angle + angle_degrees) % 360
+        processed_image = self._get_processed_image()
+        self.update_pixmap(processed_image)
 
-        # Use high-quality resampling for the rotation
-        rotated_image = self.pil_image.rotate(
-            self.rotation_angle,
-            resample=Image.Resampling.BICUBIC,
-            expand=True
-        )
-        self.update_pixmap(rotated_image)
+    def get_edited_image(self):
+        """Public method to get the final, edited image for saving."""
+        return self._get_processed_image()
+
+    def set_brightness(self, factor: float):
+        """Sets the brightness enhancement factor and updates the view."""
+        self.brightness = factor
+        self._update_display_image()
+
+    def set_contrast(self, factor: float):
+        """Sets the contrast enhancement factor and updates the view."""
+        self.contrast = factor
+        self._update_display_image()
+
+    def rotate_image(self, angle_degrees: float):
+        """Sets the rotation angle and updates the view."""
+        if not self.pil_image:
+            return
+        self.rotation_angle = angle_degrees
+        self._update_display_image()
+
+    def restore_original(self):
+        """Resets all edits to their default values and updates the view."""
+        self.rotation_angle = 0
+        self.brightness = 1.0
+        self.contrast = 1.0
+        self._update_display_image()
 
     def wheelEvent(self, event):
         """Zoom in or out using the mouse wheel."""
         zoom_in_factor = 1.25
         zoom_out_factor = 1 / zoom_in_factor
 
-        # Save the scene pos
+        # If zooming out when already fit, do nothing more than ensure it's centered.
+        if event.angleDelta().y() < 0 and not self.is_zoomed_in():
+            self.fit_view() # This ensures it's centered and drag mode is correct.
+            return
+
+        # Save the scene pos to zoom in on the cursor
         old_pos = self.mapToScene(event.position().toPoint())
 
         # Zoom
@@ -109,38 +156,62 @@ class PhotoViewer(QGraphicsView):
             zoom_factor = zoom_out_factor
         self.scale(zoom_factor, zoom_factor)
 
-        # Get the new position
+        # Get the new position and translate
         new_pos = self.mapToScene(event.position().toPoint())
-
-        # Move scene to old position
         delta = new_pos - old_pos
         self.translate(delta.x(), delta.y())
 
+        # If we zoomed out and the image now fits, center it. Otherwise, update drag mode.
+        if not self.is_zoomed_in():
+            self.fit_view()
+        else:
+            self._update_drag_mode()
+
     def fit_view(self):
-        """Fits the image to the view, preserving aspect ratio."""
-        if self._pixmap_item.pixmap():
+        """Fits the image to the view, preserving aspect ratio, and updates drag mode."""
+        if self._pixmap_item.pixmap() and not self._pixmap_item.pixmap().isNull():
             self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_drag_mode()
 
     def resizeEvent(self, event):
         """Handle resize events to keep the image fitted."""
         super().resizeEvent(event)
         self.fit_view()
 
+    def is_zoomed_in(self):
+        """Checks if the image is zoomed in larger than the view."""
+        if not self._pixmap_item.pixmap() or self._pixmap_item.pixmap().isNull():
+            return False
+
+        pixmap_in_scene_rect = self._pixmap_item.sceneBoundingRect()
+        view_rect = self.viewport().rect()
+
+        # Use a small tolerance to handle floating point inaccuracies
+        return pixmap_in_scene_rect.width() > view_rect.width() + 1e-6 or \
+               pixmap_in_scene_rect.height() > view_rect.height() + 1e-6
+
+    def _update_drag_mode(self):
+        """Enables or disables panning based on the zoom level."""
+        if self.is_zoomed_in() and not self.is_crop_mode:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+
     def toggle_crop_mode(self):
         self.is_crop_mode = not self.is_crop_mode
 
-        if self.is_crop_mode and self._pixmap_item.pixmap():
+        if self.is_crop_mode and self._pixmap_item.pixmap() and not self._pixmap_item.pixmap().isNull():
             if not self.crop_rect_item:
-                self.crop_rect_item = CropRectItem()
+                self.crop_rect_item = CropRectItem(boundary_rect=self._pixmap_item.boundingRect())
                 self._scene.addItem(self.crop_rect_item)
 
-            # Set rect to the bounds of the image in the scene
+            self.crop_rect_item.boundary_rect = self._pixmap_item.boundingRect()
             self.crop_rect_item.setRect(self._pixmap_item.boundingRect())
             self.crop_rect_item.setVisible(True)
-            self.setDragMode(QGraphicsView.DragMode.NoDrag)
         elif self.crop_rect_item:
             self.crop_rect_item.setVisible(False)
-            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+
+        self._update_drag_mode() # Let this handle the drag mode logic
         return self.is_crop_mode
 
     def apply_crop(self):
