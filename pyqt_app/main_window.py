@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QGroupBox, QFrame, QMessageBox, QListWidget, QLineEdit
 )
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import Qt, QThread, QTimer
 from .styles import DARK_STYLE_SHEET
 from .photo_viewer import PhotoViewer
 from .workers import WatchdogWorker, FileOperationWorker, StatsWorker
@@ -192,7 +192,8 @@ class MainWindow(QMainWindow):
             ]
             self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
             self.current_index = 0
-            self.update_display()
+            # Defer the first display update to prevent blocking the constructor
+            QTimer.singleShot(0, self.update_display)
         except FileNotFoundError:
             self.statusBar().showMessage(f"Error: Scan directory not found at {self.settings['scan']}", 5000)
         except Exception as e:
