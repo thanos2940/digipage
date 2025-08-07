@@ -23,8 +23,13 @@ class NewImageHandler(FileSystemEventHandler):
         if not event.is_directory:
             ext = os.path.splitext(event.src_path)[1].lower()
             if ext in ALLOWED_EXTENSIONS:
-                # Let the worker emit the signal in the correct thread context
-                self.signal_emitter(event.src_path)
+                # Check if file has a size, very basic check for writability
+                try:
+                    if os.path.getsize(event.src_path) > 0:
+                        self.signal_emitter(event.src_path)
+                except OSError:
+                    # File might be gone again, just ignore it
+                    pass
 
 class WatchdogWorker(QObject):
     """

@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
         self.setup_workers()
+        self.initial_scan()
 
     def setup_ui(self):
         # --- Central Widget and Main Layout ---
@@ -173,6 +174,22 @@ class MainWindow(QMainWindow):
         self.stats_thread.wait(2000)
 
         event.accept()
+
+    def initial_scan(self):
+        """Performs an initial scan of the scan directory on startup."""
+        try:
+            self.image_files = [
+                os.path.join(self.settings['scan'], f)
+                for f in os.listdir(self.settings['scan'])
+                if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
+            ]
+            self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+            self.current_index = 0
+            self.update_display()
+        except FileNotFoundError:
+            self.statusBar().showMessage(f"Error: Scan directory not found at {self.settings['scan']}", 5000)
+        except Exception as e:
+            self.statusBar().showMessage(f"An error occurred during initial scan: {e}", 5000)
 
     def _update_stats_display(self, stats):
         """Slot to update the statistics labels in the sidebar."""
