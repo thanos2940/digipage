@@ -15,14 +15,12 @@ DEFAULT_IMAGE_LOAD_TIMEOUT_MS = 2000
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        print("[SettingsDialog] Initializing...")
         self.setWindowTitle("DigiPage Scanner - Settings")
         self.setMinimumSize(800, 600)
         self.settings = {}
 
         self.setup_ui()
         self.load_settings()
-        print("[SettingsDialog] Initialization complete.")
 
     def setup_ui(self):
         layout = QVBoxLayout(self)

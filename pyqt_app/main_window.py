@@ -17,7 +17,6 @@ ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
 class MainWindow(QMainWindow):
     def __init__(self, settings, parent=None):
         super().__init__(parent)
-        print("[MainWindow] Initializing...")
         self.settings = settings
         self.setWindowTitle("DigiPage Scanner")
         self.setGeometry(100, 100, 1600, 900)
@@ -26,13 +25,9 @@ class MainWindow(QMainWindow):
         self.image_files = []
         self.current_index = 0
 
-        print("[MainWindow] Setting up UI...")
         self.setup_ui()
-        print("[MainWindow] Setting up workers...")
-        self.setup_workers()
-        print("[MainWindow] Performing initial scan...")
+        # self.setup_workers() # Temporarily disabled for debugging
         self.initial_scan()
-        print("[MainWindow] Initialization complete.")
 
     def setup_ui(self):
         # --- Central Widget and Main Layout ---
