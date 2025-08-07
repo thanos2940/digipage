@@ -142,9 +142,36 @@ class StatsWorker(QObject):
         }
         self.stats_updated.emit(stats)
 
+class InitialScanWorker(QObject):
+    """
+    Performs the initial scan of a directory in a background thread.
+    """
+    scan_complete = pyqtSignal(list)
+    scan_error = pyqtSignal(str)
+
+    def __init__(self, scan_directory: str):
+        super().__init__()
+        self.scan_directory = scan_directory
+
+    def run(self):
+        """Scans the directory and emits the result."""
+        try:
+            from utils import natural_sort_key
+            image_files = [
+                os.path.join(self.scan_directory, f)
+                for f in os.listdir(self.scan_directory)
+                if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
+            ]
+            image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+            self.scan_complete.emit(image_files)
+        except FileNotFoundError:
+            self.scan_error.emit(f"Scan directory not found: {self.scan_directory}")
+        except Exception as e:
+            self.scan_error.emit(f"An error occurred during initial scan: {e}")
+
 class FileOperationWorker(QObject):
     """
-    Placeholder for the file operation worker (create book, transfer, etc.).
+    Handles file operations in a background thread.
     """
     operation_successful = pyqtSignal(str, str) # operation_type, message
     operation_failed = pyqtSignal(str, str) # operation_type, error_message

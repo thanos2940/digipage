@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, QTimer
 from .styles import DARK_STYLE_SHEET
 from .photo_viewer import PhotoViewer
-from .workers import WatchdogWorker, FileOperationWorker, StatsWorker
+from .workers import WatchdogWorker, FileOperationWorker, StatsWorker, InitialScanWorker
 from .utils import natural_sort_key
 import os
 import time
@@ -26,8 +26,7 @@ class MainWindow(QMainWindow):
         self.current_index = 0
 
         self.setup_ui()
-        # self.setup_workers() # Temporarily disabled for debugging
-        # self.initial_scan() # Temporarily disabled for debugging
+        self.setup_workers()
 
     def setup_ui(self):
         # --- Central Widget and Main Layout ---
@@ -96,6 +95,30 @@ class MainWindow(QMainWindow):
         self.stats_thread.started.connect(self.stats_worker.run)
         self.stats_worker.stats_updated.connect(self._update_stats_display)
         self.stats_thread.start()
+
+        # Setup and start the InitialScanWorker
+        self.initial_scan_thread = QThread()
+        self.initial_scan_worker = InitialScanWorker(self.settings['scan'])
+        self.initial_scan_worker.moveToThread(self.initial_scan_thread)
+        self.initial_scan_thread.started.connect(self.initial_scan_worker.run)
+        self.initial_scan_worker.scan_complete.connect(self._on_initial_scan_complete)
+        self.initial_scan_worker.scan_error.connect(self._on_initial_scan_error)
+        # Clean up the thread when it's finished
+        self.initial_scan_worker.scan_complete.connect(self.initial_scan_thread.quit)
+        self.initial_scan_worker.scan_error.connect(self.initial_scan_thread.quit)
+        self.initial_scan_thread.start()
+
+    def _on_initial_scan_complete(self, image_files):
+        """Slot to handle the results of the initial directory scan."""
+        self.image_files = image_files
+        self.current_index = 0
+        self.update_display()
+        self.initial_scan_thread.deleteLater() # Mark thread for deletion
+
+    def _on_initial_scan_error(self, error_message):
+        """Slot to handle errors from the initial scan."""
+        self.statusBar().showMessage(error_message, 5000)
+        self.initial_scan_thread.deleteLater()
 
     def _add_new_image(self, path):
         """Slot to handle new images found by the watchdog."""
