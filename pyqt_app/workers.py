@@ -1,6 +1,5 @@
 import os
 import time
-import threading
 import shutil
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -42,7 +41,6 @@ class WatchdogWorker(QObject):
         super().__init__()
         self.scan_directory = scan_directory
         self.observer = Observer()
-        self._stop_event = threading.Event()
 
     def run(self):
         """Starts the watchdog observer."""
@@ -51,18 +49,16 @@ class WatchdogWorker(QObject):
         self.observer.schedule(handler, self.scan_directory, recursive=False)
         self.observer.start()
         print(f"[WatchdogWorker] Monitoring directory: {self.scan_directory}")
-
-        while not self._stop_event.is_set():
-            time.sleep(0.5)
-
-        self.observer.stop()
-        self.observer.join()
-        print("[WatchdogWorker] Thread stopped.")
+        # The observer runs in its own thread, so we allow this method to return
+        # and the QThread's event loop to run.
 
     def stop(self):
-        """Signals the run loop to exit."""
+        """Signals the observer thread to stop."""
         print("[WatchdogWorker] stop() called.")
-        self._stop_event.set()
+        if self.observer.is_alive():
+            self.observer.stop()
+            self.observer.join() # Wait for the observer to finish
+        print("[WatchdogWorker] Thread stopped.")
 
 
 from collections import deque

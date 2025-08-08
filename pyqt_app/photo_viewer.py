@@ -244,7 +244,7 @@ class PhotoViewer(QGraphicsView):
 
         # Simple case: if not rotated, the mapping is direct.
         # For a rotated image, the logic is more complex. For now, assume we crop the original.
-        if self.rotation_angle == 0:
+        if (self.base_rotation + self.fine_rotation) == 0:
             # Map crop coordinates from pixmap space to original image space
             # This can be a simple ratio mapping if the aspect ratio is maintained.
             x_ratio = original_w / pixmap_w

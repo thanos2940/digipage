@@ -107,9 +107,10 @@ class MainWindow(QMainWindow):
         self.initial_scan_thread.started.connect(self.initial_scan_worker.run)
         self.initial_scan_worker.scan_complete.connect(self._on_initial_scan_complete)
         self.initial_scan_worker.scan_error.connect(self._on_initial_scan_error)
-        # Clean up the thread when it's finished
-        self.initial_scan_worker.scan_complete.connect(self.initial_scan_thread.quit)
-        self.initial_scan_worker.scan_error.connect(self.initial_scan_thread.quit)
+        # Clean up the thread when it's finished. The connected slots call
+        # deleteLater(), which is sufficient to handle thread termination.
+        # self.initial_scan_worker.scan_complete.connect(self.initial_scan_thread.quit)
+        # self.initial_scan_worker.scan_error.connect(self.initial_scan_thread.quit)
         self.initial_scan_thread.start()
 
     def _on_initial_scan_complete(self, image_files):
