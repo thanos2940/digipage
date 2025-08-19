@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DigiPage Scanner</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app-container">
+        <main id="main-content">
+            <div id="image-display-area">
+                <div class="image-viewer-container">
+                    <div class="canvas-container">
+                        <canvas id="canvas-left"></canvas>
+                    </div>
+                    <div class="image-controls">
+                        <!-- Controls for the left image will be dynamically generated here -->
+                    </div>
+                </div>
+                <div class="image-viewer-container">
+                    <div class="canvas-container">
+                        <canvas id="canvas-right"></canvas>
+                    </div>
+                    <div class="image-controls">
+                        <!-- Controls for the right image will be dynamically generated here -->
+                    </div>
+                </div>
+            </div>
+            <div id="control-bar">
+                <div id="status-label">Loading...</div>
+                <div id="nav-buttons">
+                    <button id="prev-btn">◀ Previous</button>
+                    <button id="next-btn">Next ▶</button>
+                    <button id="jump-btn">Jump to End</button>
+                    <button id="refresh-btn">Refresh</button>
+                </div>
+                <div id="delete-buttons">
+                    <button id="delete-pair-btn" class="destructive">Delete Pair</button>
+                </div>
+            </div>
+        </main>
+        <aside id="sidebar">
+            <div class="sidebar-section" id="stats-section">
+                <h3>Performance Stats</h3>
+                <p id="stats-ppm">Pages/Min: 0.0</p>
+                <p id="stats-pending">Pending Scans: 0</p>
+                <p id="stats-books-today">Books Today: 0 (0 pages)</p>
+                <p id="stats-total-today">Total Pages Today: 0</p>
+            </div>
+            <div class="sidebar-section" id="book-creation-section">
+                <h3>Book Creation</h3>
+                <input type="text" id="book-name-input" placeholder="Enter Book Name (from QR)">
+                <button id="create-book-btn">Create Book</button>
+            </div>
+            <div class="sidebar-section" id="transfer-section">
+                <h3>Book Transfer</h3>
+                <button id="transfer-btn">Transfer to Data</button>
+            </div>
+             <div class="sidebar-section" id="settings-section">
+                <h3>Settings</h3>
+                <div class="settings-group">
+                    <label for="scan-folder">Scan Folder</label>
+                    <input type="text" id="scan-folder" readonly>
+                </div>
+                <div class="settings-group">
+                    <label for="today-folder">Today's Books Folder</label>
+                    <input type="text" id="today-folder" readonly>
+                </div>
+                <button id="save-settings-btn">Save Settings</button>
+            </div>
+        </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
