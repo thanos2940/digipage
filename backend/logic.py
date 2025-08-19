@@ -33,7 +33,7 @@ def load_settings():
     """Loads settings from the config file."""
     global scan_directory, todays_books_folder, city_paths
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             settings = json.load(f)
         scan_directory = settings.get("scan", "")
         todays_books_folder = settings.get("today", "")
@@ -196,7 +196,7 @@ def transfer_to_data():
     try:
         log_data = {}
         if os.path.exists(BOOKS_COMPLETE_LOG_FILE):
-            with open(BOOKS_COMPLETE_LOG_FILE, 'r') as f:
+            with open(BOOKS_COMPLETE_LOG_FILE, 'r', encoding='utf-8') as f:
                 log_data = json.load(f)
     except (IOError, json.JSONDecodeError):
         log_data = {}
@@ -241,7 +241,7 @@ def transfer_to_data():
 
     # Save log file
     try:
-        with open(BOOKS_COMPLETE_LOG_FILE, 'w') as f:
+        with open(BOOKS_COMPLETE_LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump(log_data, f, indent=4)
     except IOError as e:
         print(f"Could not write to log file: {e}")
@@ -269,7 +269,7 @@ def get_stats():
     pages_in_data_today = 0
     try:
         if os.path.exists(BOOKS_COMPLETE_LOG_FILE):
-            with open(BOOKS_COMPLETE_LOG_FILE, 'r') as f:
+            with open(BOOKS_COMPLETE_LOG_FILE, 'r', encoding='utf-8') as f:
                 log_data = json.load(f)
             today_str = datetime.now().strftime('%Y-%m-%d')
             todays_entries = log_data.get(today_str, [])
