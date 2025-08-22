@@ -1519,13 +1519,21 @@ class ImageScannerApp(tk.Frame):
 
     # Sets up keyboard shortcuts
     def setup_keybinds(self):
-        self.controller.bind('<Escape>', self.exit_app)
+        self.controller.bind('<Escape>', self.handle_escape)
         self.controller.bind('<Left>', self.prev_pair)
         self.controller.bind('<Right>', self.next_pair)
         self.controller.bind('<Delete>', self.delete_current_pair)
         self.controller.bind('<MouseWheel>', self.on_mouse_wheel)
         self.controller.bind('<Button-4>', self.on_mouse_wheel)
         self.controller.bind('<Button-5>', self.on_mouse_wheel)
+
+    # Handles the Escape key press
+    def handle_escape(self, event=None):
+        # self.controller is the root App instance
+        if self.controller.is_fullscreen:
+            self.controller.toggle_fullscreen() # Use the toggle to exit fullscreen
+        else:
+            self.exit_app() # The original behavior of closing the app
 
     # Updates the image display
     def update_display(self, animated=True, direction=0):
@@ -2313,7 +2321,15 @@ class App(tk.Tk):
         self.title("DigiPage Scanner")
         self.configure(bg=Style.BG_COLOR)
         self._frame = None
+        self.is_fullscreen = False
+        self.bind("<F11>", self.toggle_fullscreen)
         self.show_frame(SettingsFrame)
+
+    # Toggles fullscreen mode
+    def toggle_fullscreen(self, event=None):
+        self.is_fullscreen = not self.is_fullscreen
+        self.attributes("-fullscreen", self.is_fullscreen)
+        return "break"
 
     # Centers the settings window on the screen.
     def center_settings_window(self):
@@ -2357,4 +2373,3 @@ class App(tk.Tk):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
-
