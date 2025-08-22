@@ -87,6 +87,7 @@ class DynamicStyle:
         self.BTN_PRESS_BG = darken_color(self.BTN_BG, 0.1)
 
 Style = DynamicStyle()
+Style.load_theme("Neutral Grey") # Load a default theme immediately
 
 # --- App Configuration ---
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
