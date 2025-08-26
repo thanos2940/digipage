@@ -3,7 +3,7 @@ import os
 import time
 import shutil
 import tkinter as tk
-from tkinter import filedialog, messagebox, font
+from tkinter import filedialog, messagebox, font, ttk
 from PIL import Image, ImageTk, ImageOps, ImageEnhance
 import colorsys
 import json
@@ -36,44 +36,6 @@ if getattr(sys, 'frozen', False):
             f"Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις. Παρακαλώ ελέγξτε τη σύνδεσή σας στο διαδρόμο.\n\nΣφάλμα: {e}"
         )
 
-# --- UI Style Configuration ---
-class EnhancedTheme:
-    BG_COLOR = "#2b2b2b"
-    FG_COLOR = "#bbbbbb"
-    TEXT_SECONDARY_COLOR = "#888888"
-    
-    BTN_BG = "#3c3f41"
-    BTN_FG = "#f0f0f0"
-    BTN_HOVER_BG = "#4a4e50"
-    BTN_PRESS_BG = "#585c5e"
-    
-    ACCENT_COLOR = "#007bff"
-    SUCCESS_COLOR = "#28a745"
-    DESTRUCTIVE_COLOR = "#dc3545"
-    WARNING_COLOR = "#ffc107"
-    
-    FRAME_BG = "#333333"
-    FRAME_BORDER = "#444444"
-    
-    TOOLTIP_BG = "#252526"
-    TOOLTIP_FG = "#ffffff"
-    
-    FONT_FAMILY = ('Segoe UI', 'Calibri', 'Helvetica', 'Arial')
-
-    @staticmethod
-    def get_font(size=10, weight='normal'):
-        return (EnhancedTheme.FONT_FAMILY[0], size, weight)
-
-Style = EnhancedTheme # Default theme
-
-# --- App Configuration ---
-ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
-BACKUP_DIR = "scan_viewer_backups"
-CONFIG_FILE = "scan_viewer_config.json"
-BOOKS_COMPLETE_LOG_FILE = "books_complete_log.json" 
-DEFAULT_IMAGE_LOAD_TIMEOUT_MS = 2000 
-PERFORMANCE_WINDOW_SECONDS = 20 # Window for live performance calculation
-
 # Helper functions for color manipulation
 def lighten_color(hex_color, factor=0.1):
     hex_color = hex_color.lstrip('#')
@@ -90,6 +52,67 @@ def darken_color(hex_color, factor=0.1):
     new_l = max(0.0, hls[1] - factor)
     new_rgb = colorsys.hls_to_rgb(hls[0], new_l, hls[2])
     return '#%02x%02x%02x' % (int(new_rgb[0]*255), int(new_rgb[1]*255), int(new_rgb[2]*255))
+
+# --- UI Style Configuration ---
+THEMES = {
+    "Neutral Grey": {
+        "BG_COLOR": "#2b2b2b", "FG_COLOR": "#bbbbbb", "TEXT_SECONDARY_COLOR": "#888888",
+        "BTN_BG": "#3c3f41", "BTN_FG": "#f0f0f0",
+        "ACCENT_COLOR": "#8A8F94", "FRAME_BG": "#333333", "FRAME_BORDER": "#444444",
+        "TOOLTIP_BG": "#252526", "TOOLTIP_FG": "#ffffff",
+        # Special buttons
+        "SUCCESS_COLOR": "#28a745", "DESTRUCTIVE_COLOR": "#dc3545", "WARNING_COLOR": "#ffc107",
+        "JUMP_BTN_BREATHE_COLOR": "#6495ED", "TRANSFER_BTN_COLOR": "#ff8c00", "CROP_BTN_COLOR": "#007bff",
+    },
+    "Blue": {
+        "BG_COLOR": "#262D3F", "FG_COLOR": "#D0D5E8", "TEXT_SECONDARY_COLOR": "#8993B3",
+        "BTN_BG": "#3A435E", "BTN_FG": "#E1E6F5",
+        "ACCENT_COLOR": "#6C95FF", "FRAME_BG": "#2C354D", "FRAME_BORDER": "#3E486B",
+        "TOOLTIP_BG": "#202533", "TOOLTIP_FG": "#ffffff",
+        # Special buttons
+        "SUCCESS_COLOR": "#33B579", "DESTRUCTIVE_COLOR": "#FF6B6B", "WARNING_COLOR": "#FFD166",
+        "JUMP_BTN_BREATHE_COLOR": "#FFD166", "TRANSFER_BTN_COLOR": "#EF9595", "CROP_BTN_COLOR": "#4DB6AC",
+    },
+    "Pink": {
+        "BG_COLOR": "#3D2A32", "FG_COLOR": "#F5DDE7", "TEXT_SECONDARY_COLOR": "#A8939D",
+        "BTN_BG": "#5C3F4A", "BTN_FG": "#FCEAF1",
+        "ACCENT_COLOR": "#FF80AB", "FRAME_BG": "#4A333D", "FRAME_BORDER": "#664553",
+        "TOOLTIP_BG": "#302228", "TOOLTIP_FG": "#ffffff",
+        # Special buttons
+        "SUCCESS_COLOR": "#50C878", "DESTRUCTIVE_COLOR": "#FF6961", "WARNING_COLOR": "#FFD700",
+        "JUMP_BTN_BREATHE_COLOR": "#6495ED", "TRANSFER_BTN_COLOR": "#87CEEB", "CROP_BTN_COLOR": "#9370DB",
+    }
+}
+
+class DynamicStyle:
+    FONT_FAMILY = ('Segoe UI', 'Calibri', 'Helvetica', 'Arial')
+
+    def __init__(self):
+        self.theme_name = "Neutral Grey"
+
+    def get_font(self, size=10, weight='normal'):
+        return (self.FONT_FAMILY[0], size, weight)
+
+    def load_theme(self, theme_name):
+        self.theme_name = theme_name
+        theme_data = THEMES.get(theme_name, THEMES["Neutral Grey"])
+        for key, value in theme_data.items():
+            setattr(self, key, value)
+
+        # Update derived colors
+        self.BTN_HOVER_BG = lighten_color(self.BTN_BG, 0.1)
+        self.BTN_PRESS_BG = darken_color(self.BTN_BG, 0.1)
+
+Style = DynamicStyle()
+Style.load_theme("Neutral Grey") # Load a default theme immediately
+
+# --- App Configuration ---
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
+BACKUP_DIR = "scan_viewer_backups"
+CONFIG_FILE = "scan_viewer_config.json"
+BOOKS_COMPLETE_LOG_FILE = "books_complete_log.json"
+DEFAULT_IMAGE_LOAD_TIMEOUT_MS = 2000
+PERFORMANCE_WINDOW_SECONDS = 20 # Window for live performance calculation
 
 
 class ToolTip:
@@ -159,6 +182,17 @@ class ZoomPanCanvas(tk.Canvas):
         self.trail_glow_width = 9 # Slightly wider for the glow effect
         self.trail_duration_ms = 1500 # 1 second
         self.trail_segment_ratio = 0.15 # Length of the "snake" relative to half-perimeter (made smaller)
+
+    def update_theme(self):
+        self.config(bg=Style.BG_COLOR)
+        if self.crop_rect_id:
+            self.itemconfig(self.crop_rect_id, outline=Style.ACCENT_COLOR)
+            for handle in self.crop_handles.values():
+                self.itemconfig(handle, fill=Style.ACCENT_COLOR, outline=Style.BG_COLOR)
+        if self.split_line_id:
+            self.itemconfig(self.split_line_id, fill=Style.ACCENT_COLOR)
+        self.trail_color = Style.ACCENT_COLOR
+        self.trail_glow_color = darken_color(self.trail_color, factor=0.2)
 
     # Property to check if the canvas content is edited (cropped/rotated or color adjusted)
     @property
@@ -313,7 +347,7 @@ class ZoomPanCanvas(tk.Canvas):
         if self.is_zoomed:
             self.scan_mark(event.x, event.y)
             return
-        
+
         if self.is_splitting_mode:
             # If clicking on the split line itself, allow drag
             item = self.find_closest(event.x, event.y)
@@ -327,7 +361,7 @@ class ZoomPanCanvas(tk.Canvas):
         if "handle" in tags or "crop_box" in tags: # If interacting with crop handles or box
             if self.app_ref.current_mode is None: # Only enter crop mode if not already in a mode
                 self.app_ref.set_editing_state(True) # Set editing state for auto-navigation control
-        
+
         self.drag_info['item'] = tags[1] if "handle" in tags else ("box" if "crop_box" in tags else None)
         self.drag_info['x'], self.drag_info['y'] = event.x, event.y
         # The set_editing_state is now handled above when drag starts
@@ -350,7 +384,7 @@ class ZoomPanCanvas(tk.Canvas):
         if self.is_zoomed:
             self.pan_image(event)
             return
-        
+
         if self.is_splitting_mode and self.drag_info.get('item') == 'split_line':
             self._on_split_line_drag(event)
             return
@@ -493,7 +527,7 @@ class ZoomPanCanvas(tk.Canvas):
     def _get_point_on_perimeter(self, dist, x0, y0, x1, y1, direction='right'):
         width = x1 - x0
         height = y1 - y0
-        
+
         # Calculate perimeter segments from top-center, going clockwise (right) or counter-clockwise (left)
         # Top-center to top-right/left
         seg1_len = width / 2
@@ -501,7 +535,7 @@ class ZoomPanCanvas(tk.Canvas):
         seg2_len = height
         # Bottom-right/left to bottom-center
         seg3_len = width / 2
-        
+
         total_len = seg1_len + seg2_len + seg3_len
 
         # Clamp distance to the total length of this half-perimeter path
@@ -543,7 +577,7 @@ class ZoomPanCanvas(tk.Canvas):
         if self.trail_animation_id:
             self.after_cancel(self.trail_animation_id)
             self.trail_animation_id = None
-        
+
         # Clear existing trail lines
         for line_id in self.trail_line_ids:
             self.delete(line_id)
@@ -561,11 +595,11 @@ class ZoomPanCanvas(tk.Canvas):
         y1 = y0 + disp_h
 
         # Path length for one side (from top-center to bottom-center)
-        path_length_one_side = (disp_w / 2) + disp_h + (disp_w / 2) 
+        path_length_one_side = (disp_w / 2) + disp_h + (disp_w / 2)
         trail_segment_length = path_length_one_side * self.trail_segment_ratio
 
         start_time = time.time()
-        
+
         def _trail_step():
             if not self.winfo_exists(): # Check if canvas still exists
                 if self.trail_animation_id:
@@ -594,27 +628,27 @@ class ZoomPanCanvas(tk.Canvas):
                 p1_left = self._get_point_on_perimeter(current_dist, x0, y0, x1, y1, direction='left')
                 next_dist_left = min(current_dist + step_size, head_dist)
                 p2_left = self._get_point_on_perimeter(next_dist_left, x0, y0, x1, y1, direction='left')
-                
+
                 p1_right = self._get_point_on_perimeter(current_dist, x0, y0, x1, y1, direction='right')
                 next_dist_right = min(current_dist + step_size, head_dist)
                 p2_right = self._get_point_on_perimeter(next_dist_right, x0, y0, x1, y1, direction='right')
-                
+
                 if p1_left and p2_left:
-                    line_id = self.create_line(p1_left[0], p1_left[1], p2_left[0], p2_left[1], 
-                                               fill=self.trail_glow_color, width=self.trail_glow_width, 
+                    line_id = self.create_line(p1_left[0], p1_left[1], p2_left[0], p2_left[1],
+                                               fill=self.trail_glow_color, width=self.trail_glow_width,
                                                capstyle=tk.ROUND, joinstyle=tk.ROUND, tags="border_trail_glow")
                     self.trail_line_ids.append(line_id)
                     self.tag_lower(line_id) # Ensure glow is behind
-                
+
                 if p1_right and p2_right:
-                    line_id = self.create_line(p1_right[0], p1_right[1], p2_right[0], p2_right[1], 
-                                               fill=self.trail_glow_color, width=self.trail_glow_width, 
+                    line_id = self.create_line(p1_right[0], p1_right[1], p2_right[0], p2_right[1],
+                                               fill=self.trail_glow_color, width=self.trail_glow_width,
                                                capstyle=tk.ROUND, joinstyle=tk.ROUND, tags="border_trail_glow")
                     self.trail_line_ids.append(line_id)
                     self.tag_lower(line_id) # Ensure glow is behind
 
                 current_dist = next_dist_left # Use one of them, they should be the same
-                if current_dist >= head_dist: break 
+                if current_dist >= head_dist: break
 
             # Draw main trail lines (on top of glow)
             current_dist = tail_dist
@@ -622,20 +656,20 @@ class ZoomPanCanvas(tk.Canvas):
                 p1_left = self._get_point_on_perimeter(current_dist, x0, y0, x1, y1, direction='left')
                 next_dist_left = min(current_dist + step_size, head_dist)
                 p2_left = self._get_point_on_perimeter(next_dist_left, x0, y0, x1, y1, direction='left')
-                
+
                 p1_right = self._get_point_on_perimeter(current_dist, x0, y0, x1, y1, direction='right')
                 next_dist_right = min(current_dist + step_size, head_dist)
                 p2_right = self._get_point_on_perimeter(next_dist_right, x0, y0, x1, y1, direction='right')
-                
+
                 if p1_left and p2_left:
-                    line_id = self.create_line(p1_left[0], p1_left[1], p2_left[0], p2_left[1], 
-                                               fill=self.trail_color, width=self.trail_width, 
+                    line_id = self.create_line(p1_left[0], p1_left[1], p2_left[0], p2_left[1],
+                                               fill=self.trail_color, width=self.trail_width,
                                                capstyle=tk.ROUND, joinstyle=tk.ROUND, tags="border_trail")
                     self.trail_line_ids.append(line_id)
-                
+
                 if p1_right and p2_right:
-                    line_id = self.create_line(p1_right[0], p1_right[1], p2_right[0], p2_right[1], 
-                                               fill=self.trail_color, width=self.trail_width, 
+                    line_id = self.create_line(p1_right[0], p1_right[1], p2_right[0], p2_right[1],
+                                               fill=self.trail_color, width=self.trail_width,
                                                capstyle=tk.ROUND, joinstyle=tk.ROUND, tags="border_trail")
                     self.trail_line_ids.append(line_id)
 
@@ -659,16 +693,16 @@ class ZoomPanCanvas(tk.Canvas):
         # Brightness: factor of 1.0 means no change, 0.0 is black, 2.0 is double brightness.
         # Our slider is -1.0 to 1.0, so map it to 0.0 to 2.0.
         adjusted_brightness_factor = brightness_factor + 1.0 # Maps -1 to 0, 0 to 1, 1 to 2
-        
+
         # Contrast: factor of 1.0 means no change, 0.0 is solid grey, 2.0 is double contrast.
         # Our slider is 0.0 to 2.0, which matches PIL's enhancer.
 
         enhancer = ImageEnhance.Brightness(image)
         image = enhancer.enhance(adjusted_brightness_factor)
-        
+
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(contrast_factor)
-        
+
         return image
 
     # Sets the brightness and redraws the image
@@ -708,9 +742,9 @@ class ZoomPanCanvas(tk.Canvas):
         adjusted_image = self._apply_color_filters(self.true_original_image.copy(), self.brightness, self.contrast)
         self.app_ref.save_image_to_disk(self, adjusted_image)
         self.app_ref.invalidate_cache_for_path(self.image_path)
-        
+
         # Reload the image to update the 'true_original_image' with the saved version
-        self.load_image(self.image_path) 
+        self.load_image(self.image_path)
         self.is_color_adjusted = False # Reset flag after saving
         self.app_ref.set_editing_state(self.is_edited) # Update global editing state
         self.app_ref.show_snackbar("Οι ρυθμίσεις χρώματος αποθηκεύτηκαν.", 'info')
@@ -729,7 +763,7 @@ class ZoomPanCanvas(tk.Canvas):
         img_w, img_h = self.original_image.size
         disp_w, disp_h = img_w * self.zoom_level, img_h * self.zoom_level
         canvas_w, canvas_h = self.winfo_width(), self.winfo_height()
-        
+
         # Image top-left on canvas
         img_tl_x = (canvas_w - disp_w) / 2
         img_tl_y = (canvas_h - disp_h) / 2
@@ -765,25 +799,25 @@ class ZoomPanCanvas(tk.Canvas):
     # Handles mouse drag on the split line
     def _on_split_line_drag(self, event):
         if not self.is_splitting_mode or self.drag_info.get('item') != 'split_line': return
-        
+
         dx = event.x - self.drag_info['x']
-        
+
         img_w, img_h = self.original_image.size
         disp_w, disp_h = img_w * self.zoom_level, img_h * self.zoom_level
         canvas_w, canvas_h = self.winfo_width(), self.winfo_height()
-        
+
         img_tl_x = (canvas_w - disp_w) / 2
         img_br_x = img_tl_x + disp_w
 
         current_x_on_canvas = self.coords(self.split_line_id)[0]
         new_x_on_canvas = current_x_on_canvas + dx
-        
+
         # Constrain the line within the image display area with a small padding
         padding = 5 # pixels
         new_x_on_canvas = max(img_tl_x + padding, min(new_x_on_canvas, img_br_x - padding))
 
         self.coords(self.split_line_id, new_x_on_canvas, self.coords(self.split_line_id)[1], new_x_on_canvas, self.coords(self.split_line_id)[3])
-        
+
         # Update the ratio for saving
         self.split_line_x_ratio = (new_x_on_canvas - img_tl_x) / disp_w
         self.drag_info['x'] = event.x # Update drag start point
@@ -795,19 +829,19 @@ class ZoomPanCanvas(tk.Canvas):
     # Gets the split x-coordinate relative to the original image pixels
     def get_split_x_coord(self):
         if not self.original_image or not self.split_line_id: return None
-        
+
         # Get the current x-coordinate of the split line on the canvas
         split_x_on_canvas = self.coords(self.split_line_id)[0]
 
         img_w, img_h = self.original_image.size
         disp_w, disp_h = img_w * self.zoom_level, img_h * self.zoom_level
         canvas_w, canvas_h = self.winfo_width(), self.winfo_height()
-        
+
         img_tl_x = (canvas_w - disp_w) / 2
 
         # Convert canvas x-coordinate to original image pixel coordinate
         split_x_on_original_image = int((split_x_on_canvas - img_tl_x) / self.zoom_level)
-        
+
         # Ensure it's within image bounds
         return max(0, min(split_x_on_original_image, img_w))
 
@@ -818,7 +852,7 @@ class ZoomPanCanvas(tk.Canvas):
         img_w, img_h = self.original_image.size
         disp_w, disp_h = img_w * self.zoom_level, img_h * self.zoom_level
         canvas_w, canvas_h = self.winfo_width(), self.winfo_height()
-        
+
         img_tl_x = (canvas_w - disp_w) / 2
         img_tl_y = (canvas_h - disp_h) / 2
 
@@ -879,7 +913,7 @@ class ScanWorker(threading.Thread):
     # Stops the worker thread
     def stop(self):
         self._stop_event.set()
-        
+
     # Helper to count image files in a directory
     def _count_pages_in_folder(self, folder_path):
         count = 0
@@ -940,6 +974,343 @@ class ScanWorker(threading.Thread):
             print(f"Σφάλμα υπολογισμού στατιστικών: {e}")
             self.result_queue.put(('error', f"Σφάλμα υπολογισμού στατιστικών: {e}"))
 
+class SettingsModal(tk.Toplevel):
+    def __init__(self, parent, controller, app_ref):
+        super().__init__(parent)
+        self.transient(parent)
+        self.grab_set()
+        self.title("Ρυθμίσεις")
+        self.configure(bg=Style.BG_COLOR)
+
+        self.controller = controller
+        self.app_ref = app_ref # reference to ImageScannerApp instance
+
+        # Variables for settings
+        self.paths = {"scan": tk.StringVar(), "today": tk.StringVar()}
+        self.image_load_timeout_var = tk.StringVar(value=str(DEFAULT_IMAGE_LOAD_TIMEOUT_MS))
+        self.city_paths = {}
+        self.city_code_entry_var = tk.StringVar()
+        self.city_path_entry_var = tk.StringVar()
+        self.city_listbox = None
+
+        # Center the modal
+        self.update_idletasks()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_w = parent.winfo_width()
+        parent_h = parent.winfo_height()
+        modal_w = 700 # Increased width
+        modal_h = 600 # Increased height
+        x = parent_x + (parent_w // 2) - (modal_w // 2)
+        y = parent_y + (parent_h // 2) - (modal_h // 2)
+        self.geometry(f'{modal_w}x{modal_h}+{x}+{y}')
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+        self.setup_ui()
+        self.load_settings() # Load settings after UI is created
+
+    def setup_ui(self):
+        # Style for Notebook
+        self.style = ttk.Style(self)
+        self.style.theme_use('default')
+        self.style.configure("TNotebook", background=Style.BG_COLOR, borderwidth=0)
+        self.style.configure("TNotebook.Tab", background=Style.BTN_BG, foreground=Style.FG_COLOR, padding=[10, 5], borderwidth=0, font=Style.get_font(10))
+        self.style.map("TNotebook.Tab", background=[("selected", Style.ACCENT_COLOR)], foreground=[("selected", Style.BTN_FG)])
+        self.style.layout("TNotebook.Tab", [('Notebook.tab', {'sticky': 'nswe', 'children': [('Notebook.padding', {'side': 'top', 'sticky': 'nswe', 'children': [('Notebook.focus', {'side': 'top', 'sticky': 'nswe', 'children': [('Notebook.label', {'side': 'top', 'sticky': ''})]})]})]})])
+
+        self.main_frame = tk.Frame(self, bg=Style.BG_COLOR, padx=20, pady=20)
+        self.main_frame.pack(expand=True, fill="both")
+
+        self.notebook = ttk.Notebook(self.main_frame, style="TNotebook")
+        self.notebook.pack(expand=True, fill="both", pady=(0, 10))
+
+        self.paths_tab = tk.Frame(self.notebook, bg=Style.BG_COLOR, padx=10, pady=10)
+        self.theme_tab = tk.Frame(self.notebook, bg=Style.BG_COLOR, padx=10, pady=10)
+
+        self.notebook.add(self.paths_tab, text="  Διαδρομές & Ροή  ")
+        self.notebook.add(self.theme_tab, text="  Θέμα  ")
+
+        self.setup_paths_tab(self.paths_tab)
+        self.setup_theme_tab(self.theme_tab)
+
+        # Add Save/Cancel buttons at the bottom
+        self.button_frame = tk.Frame(self.main_frame, bg=Style.BG_COLOR)
+        self.button_frame.pack(fill='x', side='bottom', pady=(10, 0))
+
+        # Spacer to push buttons to the right
+        tk.Frame(self.button_frame, bg=Style.BG_COLOR).pack(side='left', expand=True)
+
+        self.save_btn = self.app_ref.create_styled_button(self.button_frame, "Αποθήκευση & Κλείσιμο", self.save_and_close, bg=Style.SUCCESS_COLOR)
+        self.save_btn.pack(side="right", padx=(5,0))
+
+        self.cancel_btn = self.app_ref.create_styled_button(self.button_frame, "Άκυρο", self.destroy)
+        self.cancel_btn.pack(side="right", padx=5)
+
+    def setup_paths_tab(self, parent):
+        parent.grid_columnconfigure(1, weight=1)
+
+        self.path_title_label = tk.Label(parent, text="Ρύθμιση Καταλόγων Ροής Εργασίας", bg=Style.BG_COLOR, fg=Style.FG_COLOR, font=Style.get_font(14, "bold"))
+        self.path_title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20), sticky='w')
+
+        self.path_entries = {}
+        labels = {"scan": "1. Φάκελος Σάρωσης (Εισερχόμενα)", "today": "2. Φάκελος Σημερινών Βιβλίων"}
+        for i, (name, label_text) in enumerate(labels.items(), 1):
+            label = tk.Label(parent, text=label_text, bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10))
+            label.grid(row=i, column=0, sticky='w', pady=(5,2), padx=(0,10))
+            entry_frame = tk.Frame(parent, bg=Style.BG_COLOR)
+            entry_frame.grid(row=i, column=1, columnspan=2, sticky='ew')
+            entry = tk.Entry(entry_frame, textvariable=self.paths[name], state='readonly', width=70, readonlybackground=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0,10))
+            btn = self.app_ref.create_styled_button(entry_frame, "Αναζήτηση...", lambda n=name: self.ask_dir(n), pady=4, padx=8, font_size=9)
+            btn.pack(side=tk.LEFT)
+            self.path_entries[name] = {'label': label, 'frame': entry_frame, 'entry': entry, 'btn': btn}
+
+
+        self.timeout_label = tk.Label(parent, text="3. Χρόνος Αναμονής Φόρτωσης Εικόνας (ms)", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10))
+        self.timeout_label.grid(row=3, column=0, sticky='w', pady=(5,2))
+        self.timeout_entry = tk.Entry(parent, textvariable=self.image_load_timeout_var, width=15, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT, insertbackground=Style.FG_COLOR)
+        self.timeout_entry.grid(row=3, column=1, sticky='w', ipady=5)
+        ToolTip(self.timeout_entry, "Ο χρόνος (σε ms) που η εφαρμογή περιμένει ένα αρχείο εικόνας να είναι πλήρως διαθέσιμο.")
+
+        # City Path Configuration UI
+        self.city_frame = tk.LabelFrame(parent, text="4. Ρυθμίσεις Πόλεων (Για Μεταφορά στα Data)", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE, padx=10, pady=10)
+        self.city_frame.grid(row=4, column=0, columnspan=3, sticky='ew', pady=(20, 0))
+        self.city_frame.grid_columnconfigure(1, weight=1)
+
+        list_frame = tk.Frame(self.city_frame, bg=Style.BG_COLOR)
+        list_frame.grid(row=0, column=0, rowspan=2, sticky='nsew', padx=(0, 10))
+        list_frame.grid_rowconfigure(0, weight=1)
+        self.city_listbox = tk.Listbox(list_frame, bg=Style.BTN_BG, fg=Style.FG_COLOR, font=Style.get_font(10), relief=tk.FLAT, selectbackground=Style.ACCENT_COLOR, highlightthickness=0, height=5)
+        self.city_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.city_listbox.bind('<<ListboxSelect>>', self._on_city_select)
+
+        self.city_scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.city_listbox.yview, bg=Style.BTN_BG, troughcolor=Style.BG_COLOR)
+        self.city_scrollbar.pack(side=tk.RIGHT, fill="y")
+        self.city_listbox.config(yscrollcommand=self.city_scrollbar.set)
+
+        controls_frame = tk.Frame(self.city_frame, bg=Style.BG_COLOR)
+        controls_frame.grid(row=0, column=1, sticky='ew')
+
+        tk.Label(controls_frame, text="Κωδικός (π.χ. 001):", bg=Style.BG_COLOR, fg=Style.FG_COLOR).grid(row=0, column=0, sticky='w')
+        self.city_code_entry = tk.Entry(controls_frame, textvariable=self.city_code_entry_var, width=10, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
+        self.city_code_entry.grid(row=0, column=1, sticky='w', pady=2)
+
+        tk.Label(controls_frame, text="Διαδρομή Φακέλου:", bg=Style.BG_COLOR, fg=Style.FG_COLOR).grid(row=1, column=0, sticky='w')
+        path_entry_frame = tk.Frame(controls_frame, bg=Style.BG_COLOR)
+        path_entry_frame.grid(row=1, column=1, sticky='ew')
+        self.city_path_entry = tk.Entry(path_entry_frame, textvariable=self.city_path_entry_var, width=40, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
+        self.city_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        browse_btn = self.app_ref.create_styled_button(path_entry_frame, "...", self._ask_city_dir, pady=1, padx=4)
+        browse_btn.pack(side=tk.LEFT)
+
+        btn_frame = tk.Frame(self.city_frame, bg=Style.BG_COLOR)
+        btn_frame.grid(row=1, column=1, sticky='e', pady=(10,0))
+        self.add_city_btn = self.app_ref.create_styled_button(btn_frame, "Προσθήκη/Ενημέρωση", self._add_or_update_city, bg=Style.SUCCESS_COLOR)
+        self.add_city_btn.pack(side=tk.LEFT, padx=5)
+        self.remove_city_btn = self.app_ref.create_styled_button(btn_frame, "Αφαίρεση Επιλογής", self._remove_city, bg=Style.DESTRUCTIVE_COLOR)
+        self.remove_city_btn.pack(side=tk.LEFT, padx=5)
+
+    def setup_theme_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+
+        self.theme_title_label = tk.Label(parent, text="Επιλέξτε ένα θέμα για την εφαρμογή.", bg=Style.BG_COLOR, fg=Style.FG_COLOR, font=Style.get_font(12))
+        self.theme_title_label.grid(row=0, column=0, pady=(0, 15), sticky='w')
+
+        self.theme_frame = tk.Frame(parent, bg=Style.BG_COLOR)
+        self.theme_frame.grid(row=1, column=0, sticky='ew')
+        self.theme_frame.grid_columnconfigure(0, weight=1)
+        self.theme_frame.grid_columnconfigure(1, weight=1)
+        self.theme_frame.grid_columnconfigure(2, weight=1)
+
+        # Create buttons for each theme
+        self.blue_theme_btn = self.app_ref.create_styled_button(self.theme_frame, "Μπλε", lambda: self.apply_theme("Blue"), bg=THEMES["Blue"]["ACCENT_COLOR"])
+        self.blue_theme_btn.grid(row=0, column=0, padx=10, pady=5, sticky='ew', ipady=10)
+
+        self.pink_theme_btn = self.app_ref.create_styled_button(self.theme_frame, "Ροζ", lambda: self.apply_theme("Pink"), bg=THEMES["Pink"]["ACCENT_COLOR"])
+        self.pink_theme_btn.grid(row=0, column=1, padx=10, pady=5, sticky='ew', ipady=10)
+
+        self.grey_theme_btn = self.app_ref.create_styled_button(self.theme_frame, "Ουδέτερο Γκρι", lambda: self.apply_theme("Neutral Grey"), bg=THEMES["Neutral Grey"]["ACCENT_COLOR"])
+        self.grey_theme_btn.grid(row=0, column=2, padx=10, pady=5, sticky='ew', ipady=10)
+
+        self.theme_info_label = tk.Label(parent, text="Η αλλαγή του θέματος εφαρμόζεται άμεσα σε όλη την εφαρμογή.", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(9), wraplength=300, justify=tk.LEFT)
+        self.theme_info_label.grid(row=2, column=0, pady=(15, 0), sticky='w')
+
+    def apply_theme(self, theme_name):
+        Style.load_theme(theme_name)
+        self.save_theme_setting(theme_name)
+        self.controller.update_theme()
+
+    def save_theme_setting(self, theme_name):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
+            else: settings = {}
+        except (IOError, json.JSONDecodeError): settings = {}
+
+        settings['theme'] = theme_name
+        try:
+            with open(CONFIG_FILE, 'w') as f: json.dump(settings, f, indent=4)
+        except IOError as e: print(f"ERROR: Could not save theme setting: {e}")
+
+    def update_theme(self):
+        self.configure(bg=Style.BG_COLOR)
+        self.main_frame.config(bg=Style.BG_COLOR)
+        self.button_frame.config(bg=Style.BG_COLOR)
+        self.button_frame.winfo_children()[0].config(bg=Style.BG_COLOR) # Spacer
+
+        # Update tabs
+        self.paths_tab.config(bg=Style.BG_COLOR)
+        self.theme_tab.config(bg=Style.BG_COLOR)
+        self.style.configure("TNotebook", background=Style.BG_COLOR)
+        self.style.configure("TNotebook.Tab", background=Style.BTN_BG, foreground=Style.FG_COLOR, font=Style.get_font(10))
+        self.style.map("TNotebook.Tab", background=[("selected", Style.ACCENT_COLOR)], foreground=[("selected", Style.BTN_FG)])
+
+        # Update Paths Tab
+        self.path_title_label.config(bg=Style.BG_COLOR, fg=Style.FG_COLOR)
+        for name_vals in self.path_entries.values():
+            name_vals['label'].config(bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR)
+            name_vals['frame'].config(bg=Style.BG_COLOR)
+            name_vals['entry'].config(readonlybackground=Style.BTN_BG, fg=Style.FG_COLOR)
+            name_vals['btn'].config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+        self.timeout_label.config(bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR)
+        self.timeout_entry.config(bg=Style.BTN_BG, fg=Style.FG_COLOR, insertbackground=Style.FG_COLOR)
+        self.city_frame.config(bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR)
+        for child in self.city_frame.winfo_children(): # Update frames and labels inside city_frame
+            child.config(bg=Style.BG_COLOR)
+            if child.winfo_class() == 'Label': child.config(fg=Style.FG_COLOR)
+        self.city_listbox.config(bg=Style.BTN_BG, fg=Style.FG_COLOR, selectbackground=Style.ACCENT_COLOR)
+        self.city_scrollbar.config(bg=Style.BTN_BG, troughcolor=Style.BG_COLOR)
+        self.city_code_entry.config(bg=Style.BTN_BG, fg=Style.FG_COLOR)
+        self.city_path_entry.config(bg=Style.BTN_BG, fg=Style.FG_COLOR)
+        self.add_city_btn.config(bg=Style.SUCCESS_COLOR)
+        self.remove_city_btn.config(bg=Style.DESTRUCTIVE_COLOR)
+
+        # Update Theme Tab
+        self.theme_title_label.config(bg=Style.BG_COLOR, fg=Style.FG_COLOR)
+        self.theme_frame.config(bg=Style.BG_COLOR)
+        self.blue_theme_btn.config(bg=THEMES["Blue"]["ACCENT_COLOR"])
+        self.pink_theme_btn.config(bg=THEMES["Pink"]["ACCENT_COLOR"])
+        self.grey_theme_btn.config(bg=THEMES["Neutral Grey"]["ACCENT_COLOR"])
+        self.theme_info_label.config(bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR)
+
+        # Update Main Buttons
+        self.save_btn.config(bg=Style.SUCCESS_COLOR)
+        self.cancel_btn.config(bg=Style.BTN_BG) # Make cancel less prominent
+
+    def load_settings(self):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
+                for key in self.paths: self.paths[key].set(settings.get(key, ""))
+                self.image_load_timeout_var.set(str(settings.get("image_load_timeout_ms", DEFAULT_IMAGE_LOAD_TIMEOUT_MS)))
+                self.city_paths = settings.get("city_paths", {})
+                if self.city_listbox: self._update_city_listbox()
+        except (IOError, json.JSONDecodeError) as e: print(f"ERROR: Could not load config for modal: {e}")
+
+    def save_settings(self):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
+            else: settings = {}
+        except (IOError, json.JSONDecodeError): settings = {}
+
+        path_settings = {key: var.get() for key, var in self.paths.items()}
+        settings.update(path_settings)
+
+        try:
+            timeout_val = int(self.image_load_timeout_var.get())
+            settings["image_load_timeout_ms"] = max(100, timeout_val)
+        except ValueError:
+            settings["image_load_timeout_ms"] = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
+
+        settings["city_paths"] = self.city_paths
+
+        try:
+            with open(CONFIG_FILE, 'w') as f: json.dump(settings, f, indent=4)
+            return True
+        except IOError as e:
+            print(f"ERROR: Could not save config: {e}")
+            messagebox.showerror("Σφάλμα Αποθήκευσης", f"Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων:\n{e}", parent=self)
+            return False
+
+    def save_and_close(self):
+        if self.save_settings():
+            self.app_ref.show_snackbar("Οι ρυθμίσεις διαδρομής αποθηκεύτηκαν. Εφαρμογή...", 'info')
+
+            self.app_ref.scan_directory = self.paths["scan"].get()
+            self.app_ref.todays_books_folder = self.paths["today"].get()
+            self.app_ref.city_paths = self.city_paths
+            try:
+                self.app_ref.image_load_timeout_ms = int(self.image_load_timeout_var.get())
+            except ValueError:
+                self.app_ref.image_load_timeout_ms = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
+
+            self.app_ref.scan_worker.scan_directory = self.app_ref.scan_directory
+            self.app_ref.scan_worker.todays_books_folder = self.app_ref.todays_books_folder
+            self.app_ref.scan_worker.city_paths = self.app_ref.city_paths
+
+            self.app_ref.start_watcher()
+            self.app_ref.refresh_scan_folder()
+            self.app_ref.update_stats()
+
+            self.destroy()
+
+    def ask_dir(self, name):
+        path = filedialog.askdirectory(title=f"Επιλέξτε Φάκελο {name.replace('_', ' ').title()}")
+        if path: self.paths[name].set(path)
+
+    def _ask_city_dir(self):
+        path = filedialog.askdirectory(title="Επιλέξτε τον κατάλογο δεδομένων της πόλης")
+        if path: self.city_path_entry_var.set(path)
+
+    def _update_city_listbox(self):
+        self.city_listbox.delete(0, tk.END)
+        for code, path in sorted(self.city_paths.items()):
+            self.city_listbox.insert(tk.END, f"{code}: {path}")
+
+    def _on_city_select(self, event):
+        selection = self.city_listbox.curselection()
+        if not selection: return
+
+        selected_text = self.city_listbox.get(selection[0])
+        code, path = selected_text.split(':', 1)
+
+        self.city_code_entry_var.set(code.strip())
+        self.city_path_entry_var.set(path.strip())
+
+    def _add_or_update_city(self):
+        code = self.city_code_entry_var.get().strip()
+        path = self.city_path_entry_var.get().strip()
+
+        if not code or not path:
+            messagebox.showwarning("Ελλιπή Στοιχεία", "Παρακαλώ εισάγετε κωδικό και διαδρομή.", parent=self)
+            return
+
+        if not re.match(r'^\d{3}$', code):
+            messagebox.showwarning("Λάθος Κωδικός", "Ο κωδικός πρέπει να είναι ακριβώς 3 ψηφία.", parent=self)
+            return
+
+        self.city_paths[code] = path
+        self._update_city_listbox()
+        self.city_code_entry_var.set("")
+        self.city_path_entry_var.set("")
+
+    def _remove_city(self):
+        selection = self.city_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Καμία Επιλογή", "Παρακαλώ επιλέξτε μια πόλη για αφαίρεση.", parent=self)
+            return
+
+        selected_text = self.city_listbox.get(selection[0])
+        code = selected_text.split(':', 1)[0].strip()
+
+        if messagebox.askyesno("Επιβεβαίωση", f"Είστε σίγουροι ότι θέλετε να αφαιρέσετε τον κωδικό '{code}';", parent=self):
+            if code in self.city_paths:
+                del self.city_paths[code]
+                self._update_city_listbox()
+                self.city_code_entry_var.set("")
+                self.city_path_entry_var.set("")
 
 class ImageScannerApp(tk.Frame):
     # Initializes the main application frame
@@ -950,7 +1321,7 @@ class ImageScannerApp(tk.Frame):
         self.city_paths = settings.get("city_paths", {}) # Load city paths config
         self.is_animating = False
         self.image_cache, self.cache_lock = {}, threading.Lock()
-        
+
         # New state management for modes (crop, split, normal)
         self.current_mode = None # Can be 'crop', 'split', or None
         self.active_canvas = None # The canvas currently being cropped or split
@@ -958,7 +1329,7 @@ class ImageScannerApp(tk.Frame):
         # Queues for background workers
         self.preload_queue, self.preload_thread = queue.Queue(), threading.Thread(target=self._preload_worker, daemon=True)
         self.preload_thread.start()
-        
+
         self.scan_worker_command_queue = queue.Queue()
         self.scan_worker_result_queue = queue.Queue()
         self.scan_worker = ScanWorker(self.scan_worker_command_queue, self.scan_worker_result_queue, self.scan_directory, self.todays_books_folder, self.city_paths)
@@ -966,15 +1337,15 @@ class ImageScannerApp(tk.Frame):
 
         self.observer = None
         self.is_transfer_active, self.transfer_thread, self.transfer_status_queue = False, None, queue.Queue()
-        
+
         # Variables for jump button breathing animation
         self.jump_button_breathing_id = None
         self.breathing_step = 0
         self.breathing_total_steps = 25 # Steps for one half-cycle (e.g., from base to target color) - Made faster
         self.breathing_direction = 1 # 1 for increasing lightness, -1 for decreasing
         self.breathing_base_color_rgb = self._hex_to_rgb(Style.BTN_BG)
-        self.breathing_target_color_rgb = self._hex_to_rgb("#6495ED") # Cornflower Blue for breathing
-        
+        self.breathing_target_color_rgb = self._hex_to_rgb(Style.JUMP_BTN_BREATHE_COLOR)
+
         # For live performance tracking
         self.scan_timestamps = deque()
 
@@ -998,6 +1369,90 @@ class ImageScannerApp(tk.Frame):
         self.start_watcher()
         self.scan_worker_command_queue.put(('initial_scan', self.scan_directory)) # Trigger initial scan via worker
         self.update_stats()
+
+    def open_settings_modal(self):
+        if hasattr(self, 'settings_window') and self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            return
+        self.settings_window = SettingsModal(self.controller, self.controller, self)
+        self.wait_window(self.settings_window)
+
+    def update_theme(self):
+        # This method will be called to apply the current theme to all widgets.
+        # --- Main Frames ---
+        self.configure(bg=Style.BG_COLOR)
+        self.main_app_frame.config(bg=Style.BG_COLOR)
+        self.image_display_area.config(bg=Style.BG_COLOR)
+
+        # --- Sidebar ---
+        self.sidebar_frame.config(bg=Style.FRAME_BG)
+        self.stats_frame.config(bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR)
+
+        for label in [self.scans_min_label, self.current_scans_label, self.books_today_label, self.total_scans_today_label]:
+            label.config(bg=Style.FRAME_BG, fg=Style.FG_COLOR)
+
+        self.todays_books_panel.config(bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR)
+        self.book_creation_frame.config(bg=Style.FRAME_BG)
+        self.book_creation_frame.winfo_children()[0].config(bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR) # label
+        self.qr_entry.config(bg=Style.BTN_BG, fg=Style.FG_COLOR, insertbackground=Style.FG_COLOR)
+        self.create_book_btn.config(bg=Style.ACCENT_COLOR)
+
+        self.todays_books_canvas.config(bg=Style.FRAME_BG, highlightthickness=0)
+        self.todays_books_frame.config(bg=Style.FRAME_BG)
+        self.todays_books_scrollbar.config(bg=Style.BTN_BG, troughcolor=Style.BG_COLOR)
+        self.transfer_to_data_btn.config(bg=Style.TRANSFER_BTN_COLOR)
+
+        self.settings_btn_frame.config(bg=Style.FRAME_BG)
+        self.settings_btn.config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+
+        # --- Control Bar ---
+        self.control_frame.config(bg=Style.FRAME_BG)
+        self.left_frame.config(bg=Style.FRAME_BG)
+        self.status_label.config(bg=Style.FRAME_BG, fg=Style.FG_COLOR)
+
+        self.center_frame.config(bg=Style.FRAME_BG)
+        for btn in [self.prev_btn, self.next_btn, self.jump_to_end_btn, self.refresh_btn]:
+            btn.config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+        self.right_frame.config(bg=Style.FRAME_BG)
+
+        self.delete_pair_btn.config(bg=Style.DESTRUCTIVE_COLOR)
+        self.complete_split_btn.config(bg=Style.SUCCESS_COLOR)
+        self.cancel_split_btn.config(bg=Style.DESTRUCTIVE_COLOR)
+
+        # --- Image Canvases and Buttons ---
+        for i, canvas in enumerate(self.image_canvases):
+            canvas.update_theme()
+            buttons = self.action_buttons_list[i]
+
+            canvas.master.config(bg=Style.BG_COLOR)
+            buttons['crop'].master.master.config(bg=Style.BG_COLOR)
+            buttons['crop'].master.config(bg=Style.BG_COLOR)
+            buttons['rot_left'].master.config(bg=Style.BG_COLOR)
+            buttons['color_adjust_frame'].config(bg=Style.BG_COLOR)
+
+            buttons['crop'].config(bg=Style.CROP_BTN_COLOR)
+            buttons['split'].config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+            buttons['restore'].config(bg=Style.WARNING_COLOR)
+            buttons['delete'].config(bg=Style.DESTRUCTIVE_COLOR)
+            buttons['rot_left'].config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+            buttons['rot_right'].config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+            buttons['save_color'].config(bg=Style.SUCCESS_COLOR)
+            buttons['cancel_color'].config(bg=Style.DESTRUCTIVE_COLOR)
+
+            buttons['angle_slider'].config(bg=Style.BG_COLOR, fg=Style.FG_COLOR, troughcolor=Style.BTN_BG)
+            buttons['brightness_slider'].config(bg=Style.BG_COLOR, fg=Style.FG_COLOR, troughcolor=Style.BTN_BG)
+            buttons['contrast_slider'].config(bg=Style.BG_COLOR, fg=Style.FG_COLOR, troughcolor=Style.BTN_BG)
+            for child in buttons['color_adjust_frame'].winfo_children():
+                if isinstance(child, tk.Label):
+                    child.config(bg=Style.BG_COLOR, fg=Style.FG_COLOR)
+
+        self.breathing_base_color_rgb = self._hex_to_rgb(Style.BTN_BG)
+        self.breathing_target_color_rgb = self._hex_to_rgb(Style.JUMP_BTN_BREATHE_COLOR)
+
+        self._update_todays_books_panel()
+
+        if hasattr(self, 'settings_window') and self.settings_window.winfo_exists():
+            self.settings_window.update_theme()
 
     # Converts hex color string to RGB tuple (0-255)
     def _hex_to_rgb(self, hex_color):
@@ -1029,7 +1484,7 @@ class ImageScannerApp(tk.Frame):
                 self.breathing_base_color_rgb[i] + (self.breathing_target_color_rgb[i] - self.breathing_base_color_rgb[i]) * factor
                 for i in range(3)
             ]
-            
+
             self.jump_to_end_btn.config(bg=self._rgb_to_hex(current_rgb))
 
             self.breathing_step += 1
@@ -1111,7 +1566,7 @@ class ImageScannerApp(tk.Frame):
                     self.scan_worker_command_queue.put(('initial_scan', self.scan_directory))
                 elif operation_type == 'split_image': # New: Handle split operation result
                     # After successful split, exit the mode and trigger a re-scan
-                    self.exit_mode() 
+                    self.exit_mode()
                     self.scan_worker_command_queue.put(('initial_scan', self.scan_directory))
             self.transfer_status_queue.task_done()
         except queue.Empty:
@@ -1140,16 +1595,16 @@ class ImageScannerApp(tk.Frame):
                 pages_in_today = data.get("pages_in_today", 0)
                 books_in_today = data.get("books_in_today", 0)
                 pages_in_data = data.get("pages_in_data", 0)
-                
+
                 # Update UI
                 self.current_scans_label.config(text=f"Σαρώσεις σε αναμονή: {len(self.image_files)}")
                 self.books_today_label.config(text=f"Βιβλία σε αναμονή: {books_in_today} ({pages_in_today} σελ.)")
 
                 total_pages_today = pages_in_today + pages_in_data + len(self.image_files)
                 self.total_scans_today_label.config(text=f"Σύνολο Σελίδων Σήμερα: {total_pages_today}")
-                
+
                 self._update_todays_books_panel() # Also refresh the book list
-                
+
             elif command == 'error':
                 self.show_snackbar(data, 'error')
             self.scan_worker_result_queue.task_done()
@@ -1164,14 +1619,14 @@ class ImageScannerApp(tk.Frame):
         # 1. Not in any editing mode (crop/split)
         # 2. There are unviewed pages after the current displayed pair
         has_unviewed_pages = (self.current_index + 2 < len(self.image_files))
-        
+
         if self.current_mode is None and has_unviewed_pages:
             self._start_jump_button_breathing()
         else:
             self._stop_jump_button_breathing()
 
     # Enables or disables transfer-related buttons
-    def _set_transfer_buttons_state(self, state): 
+    def _set_transfer_buttons_state(self, state):
         buttons_to_toggle = [
             self.create_book_btn, self.transfer_to_data_btn
         ]
@@ -1217,18 +1672,18 @@ class ImageScannerApp(tk.Frame):
                     try:
                         # Count pages before moving
                         page_count = self._count_pages_in_folder(move['source'])
-                        
+
                         # Ensure the date-stamped destination folder exists
                         os.makedirs(move['destination_folder'], exist_ok=True)
-                        
+
                         final_book_path = os.path.join(move['destination_folder'], move['book_name'])
-                        
+
                         # Now move the book folder into it
                         shutil.move(move['source'], final_book_path)
-                        
+
                         # Add to log with new detailed format
                         log_entry = {
-                            "name": move['book_name'], 
+                            "name": move['book_name'],
                             "pages": page_count,
                             "path": final_book_path,
                             "timestamp": datetime.now().isoformat()
@@ -1238,7 +1693,7 @@ class ImageScannerApp(tk.Frame):
                     except Exception as e:
                         failed_moves.append(move['book_name'])
                         print(f"ERROR moving book {move['book_name']}: {e}")
-                
+
                 # Save log file once
                 try:
                     with open(BOOKS_COMPLETE_LOG_FILE, 'w') as f:
@@ -1282,7 +1737,7 @@ class ImageScannerApp(tk.Frame):
 
                     # Save the right part first, as it's a new file
                     right_image.save(right_path)
-                    
+
                     # Save the left part, overwriting the original file
                     # This implicitly handles the deletion of the original full image content
                     left_image.save(original_path)
@@ -1309,19 +1764,19 @@ class ImageScannerApp(tk.Frame):
         self.grid_rowconfigure(1, weight=0)
         self.grid_columnconfigure(0, weight=1)
 
-        main_app_frame = tk.Frame(self, bg=Style.BG_COLOR)
-        main_app_frame.grid(row=0, column=0, sticky='nsew')
-        main_app_frame.grid_rowconfigure(0, weight=1)
-        main_app_frame.grid_columnconfigure(0, weight=1)
-        main_app_frame.grid_columnconfigure(1, minsize=250, weight=0) # Increased sidebar width
+        self.main_app_frame = tk.Frame(self, bg=Style.BG_COLOR)
+        self.main_app_frame.grid(row=0, column=0, sticky='nsew')
+        self.main_app_frame.grid_rowconfigure(0, weight=1)
+        self.main_app_frame.grid_columnconfigure(0, weight=1)
+        self.main_app_frame.grid_columnconfigure(1, minsize=250, weight=0) # Increased sidebar width
 
-        self.image_display_area = tk.Frame(main_app_frame, bg=Style.BG_COLOR)
+        self.image_display_area = tk.Frame(self.main_app_frame, bg=Style.BG_COLOR)
         self.image_display_area.grid(row=0, column=0, sticky='nsew')
         self.image_display_area.grid_rowconfigure(0, weight=1)
         self.image_display_area.grid_columnconfigure(0, weight=1)
         self.image_display_area.grid_columnconfigure(1, weight=1)
 
-        self._setup_sidebar(main_app_frame)
+        self._setup_sidebar(self.main_app_frame)
         self._setup_control_bar()
         self._setup_image_displays()
 
@@ -1331,7 +1786,7 @@ class ImageScannerApp(tk.Frame):
         press_bg = darken_color(bg, 0.1)
         btn = tk.Button(parent, text=text, bg=bg, fg=fg, activebackground=press_bg, activeforeground=fg,
                         font=Style.get_font(font_size, font_weight), relief=tk.FLAT, borderwidth=0, padx=padx, pady=pady)
-        
+
         def _command_wrapper():
             if command:
                 command()
@@ -1354,36 +1809,36 @@ class ImageScannerApp(tk.Frame):
 
     # Sets up the sidebar
     def _setup_sidebar(self, parent):
-        sidebar_frame = tk.Frame(parent, bg=Style.FRAME_BG, padx=15, pady=15)
-        sidebar_frame.grid(row=0, column=1, sticky='nsw', padx=(0,10), pady=(10,10))
-        sidebar_frame.grid_rowconfigure(1, weight=1)
+        self.sidebar_frame = tk.Frame(parent, bg=Style.FRAME_BG, padx=15, pady=15)
+        self.sidebar_frame.grid(row=0, column=1, sticky='nsw', padx=(0,10), pady=(10,10))
+        self.sidebar_frame.grid_rowconfigure(1, weight=1)
 
-        stats_frame = tk.LabelFrame(sidebar_frame, text="Στατιστικά Απόδοσης", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE)
-        stats_frame.pack(fill=tk.X, pady=10)
-        
-        self.scans_min_label = tk.Label(stats_frame, text="Απόδοση: 0.0 σελ/λεπτό", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
+        self.stats_frame = tk.LabelFrame(self.sidebar_frame, text="Στατιστικά Απόδοσης", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE)
+        self.stats_frame.pack(fill=tk.X, pady=10)
+
+        self.scans_min_label = tk.Label(self.stats_frame, text="Απόδοση: 0.0 σελ/λεπτό", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
         self.scans_min_label.pack(anchor='w', padx=10, pady=2)
-        
-        self.current_scans_label = tk.Label(stats_frame, text="Σαρώσεις σε αναμονή: 0", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
+
+        self.current_scans_label = tk.Label(self.stats_frame, text="Σαρώσεις σε αναμονή: 0", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
         self.current_scans_label.pack(anchor='w', padx=10, pady=2)
 
-        self.books_today_label = tk.Label(stats_frame, text="Βιβλία σε αναμονή: 0 (0 σελ.)", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
+        self.books_today_label = tk.Label(self.stats_frame, text="Βιβλία σε αναμονή: 0 (0 σελ.)", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10))
         self.books_today_label.pack(anchor='w', padx=10, pady=2)
-        
-        self.total_scans_today_label = tk.Label(stats_frame, text="Σύνολο Σελίδων Σήμερα: 0", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10, 'bold'))
+
+        self.total_scans_today_label = tk.Label(self.stats_frame, text="Σύνολο Σελίδων Σήμερα: 0", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10, 'bold'))
         self.total_scans_today_label.pack(anchor='w', padx=10, pady=(5,5))
 
         # New: Todays Books Panel
-        self.todays_books_panel = tk.LabelFrame(sidebar_frame, text="Βιβλία Σήμερα", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE)
+        self.todays_books_panel = tk.LabelFrame(self.sidebar_frame, text="Βιβλία Σήμερα", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE)
         self.todays_books_panel.pack(fill=tk.BOTH, pady=10, expand=True) # Fill and expand
-        
+
         # Book creation elements moved here
-        book_creation_frame = tk.Frame(self.todays_books_panel, bg=Style.FRAME_BG)
-        book_creation_frame.pack(fill=tk.X, pady=(5, 0), padx=5)
-        tk.Label(book_creation_frame, text="Όνομα Βιβλίου:", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).pack(side=tk.LEFT, padx=(0, 5))
-        self.qr_entry = tk.Entry(book_creation_frame, font=Style.get_font(11), width=15, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT, insertbackground=Style.FG_COLOR)
+        self.book_creation_frame = tk.Frame(self.todays_books_panel, bg=Style.FRAME_BG)
+        self.book_creation_frame.pack(fill=tk.X, pady=(5, 0), padx=5)
+        tk.Label(self.book_creation_frame, text="Όνομα Βιβλίου:", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).pack(side=tk.LEFT, padx=(0, 5))
+        self.qr_entry = tk.Entry(self.book_creation_frame, font=Style.get_font(11), width=15, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT, insertbackground=Style.FG_COLOR)
         self.qr_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
-        self.create_book_btn = self.create_styled_button(book_creation_frame, "Δημιουργία", self.create_new_book, bg=Style.ACCENT_COLOR, tooltip="Δημιουργία νέου φακέλου βιβλίου και μεταφορά όλων των τρεχουσών σαρώσεων σε αυτόν.", pady=5, padx=8) # Shorter text for space
+        self.create_book_btn = self.create_styled_button(self.book_creation_frame, "Δημιουργία", self.create_new_book, bg=Style.ACCENT_COLOR, tooltip="Δημιουργία νέου φακέλου βιβλίου και μεταφορά όλων των τρεχουσών σαρώσεων σε αυτόν.", pady=5, padx=8) # Shorter text for space
         self.create_book_btn.pack(side=tk.LEFT, padx=(5,0))
 
         # Canvas for book list
@@ -1392,54 +1847,60 @@ class ImageScannerApp(tk.Frame):
         self.todays_books_frame = tk.Frame(self.todays_books_canvas, bg=Style.FRAME_BG)
         self.todays_books_canvas.create_window((0, 0), window=self.todays_books_frame, anchor="nw")
         self.todays_books_frame.bind("<Configure>", lambda e: self.todays_books_canvas.configure(scrollregion=self.todays_books_canvas.bbox("all")))
-        
+
         # Scrollbar for the new panel
         self.todays_books_scrollbar = tk.Scrollbar(self.todays_books_panel, orient="vertical", command=self.todays_books_canvas.yview, bg=Style.BTN_BG, troughcolor=Style.BG_COLOR)
         self.todays_books_scrollbar.pack(side=tk.RIGHT, fill="y")
         self.todays_books_canvas.config(yscrollcommand=self.todays_books_scrollbar.set)
-        
+
         # New "Transfer to Data" button
-        self.transfer_to_data_btn = self.create_styled_button(self.todays_books_panel, "Μεταφορά στα Data Πόλεων", self.transfer_to_data, bg="#ff8c00", tooltip="Μετακίνηση βιβλίων στους φακέλους δεδομένων της αντίστοιχης πόλης.")
+        self.transfer_to_data_btn = self.create_styled_button(self.todays_books_panel, "Μεταφορά στα Data Πόλεων", self.transfer_to_data, bg=Style.TRANSFER_BTN_COLOR, tooltip="Μετακίνηση βιβλίων στους φακέλους δεδομένων της αντίστοιχης πόλης.")
         self.transfer_to_data_btn.pack(fill=tk.X, pady=(10,5), padx=10)
+
+        # New "Settings" button at the bottom of the sidebar
+        self.settings_btn_frame = tk.Frame(self.sidebar_frame, bg=Style.FRAME_BG)
+        self.settings_btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(10,0))
+        self.settings_btn = self.create_styled_button(self.settings_btn_frame, "⚙️ Ρυθμίσεις", self.open_settings_modal, font_size=11, pady=8)
+        self.settings_btn.pack(fill=tk.X, expand=True)
 
 
     # Sets up the bottom control bar
     def _setup_control_bar(self):
-        control_frame = tk.Frame(self, bg=Style.FRAME_BG, pady=10, padx=20)
-        control_frame.grid(row=1, column=0, sticky='ew')
-        control_frame.grid_columnconfigure(0, weight=1) # Left side for status
-        control_frame.grid_columnconfigure(1, weight=1) # Center for navigation
-        control_frame.grid_columnconfigure(2, weight=1) # Right for delete button
+        self.control_frame = tk.Frame(self, bg=Style.FRAME_BG, pady=10, padx=20)
+        self.control_frame.grid(row=1, column=0, sticky='ew')
+        self.control_frame.grid_columnconfigure(0, weight=1) # Left side for status
+        self.control_frame.grid_columnconfigure(1, weight=1) # Center for navigation
+        self.control_frame.grid_columnconfigure(2, weight=1) # Right for delete button
 
-        left_frame = tk.Frame(control_frame, bg=Style.FRAME_BG)
-        left_frame.grid(row=0, column=0, sticky='w')
-        self.status_label = tk.Label(left_frame, text="Φόρτωση...", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(12, "bold"))
+        self.left_frame = tk.Frame(self.control_frame, bg=Style.FRAME_BG)
+        self.left_frame.grid(row=0, column=0, sticky='w')
+        self.status_label = tk.Label(self.left_frame, text="Φόρτωση...", bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(12, "bold"))
         self.status_label.pack(anchor='w')
-        
-        center_frame = tk.Frame(control_frame, bg=Style.FRAME_BG)
-        center_frame.grid(row=0, column=1, sticky='nsew') # Changed column to 1
-        self.prev_btn = self.create_styled_button(center_frame, "◀ Προηγούμενο", self.prev_pair, tooltip="Μετάβαση στο προηγούμενο ζεύγος (Αριστερό Βέλος)", font_size=12, pady=10)
+
+        self.center_frame = tk.Frame(self.control_frame, bg=Style.FRAME_BG)
+        self.center_frame.grid(row=0, column=1, sticky='nsew') # Changed column to 1
+        self.prev_btn = self.create_styled_button(self.center_frame, "◀ Προηγούμενο", self.prev_pair, tooltip="Μετάβαση στο προηγούμενο ζεύγος (Αριστερό Βέλος)", font_size=12, pady=10)
         self.prev_btn.pack(side=tk.LEFT, padx=5)
-        self.next_btn = self.create_styled_button(center_frame, "Επόμενο ▶", self.next_pair, tooltip="Μετάβαση στο επόμενο ζεύγος (Δεξί Βέλος)", font_size=12, pady=10)
+        self.next_btn = self.create_styled_button(self.center_frame, "Επόμενο ▶", self.next_pair, tooltip="Μετάβαση στο επόμενο ζεύγος (Δεξί Βέλος)", font_size=12, pady=10)
         self.next_btn.pack(side=tk.LEFT, padx=5)
-        self.jump_to_end_btn = self.create_styled_button(center_frame, "Μετάβαση στο Τέλος", self.jump_to_end, tooltip="Μετάβαση στο τελευταίο ζεύγος σελίδων.", font_size=12, pady=10)
+        self.jump_to_end_btn = self.create_styled_button(self.center_frame, "Μετάβαση στο Τέλος", self.jump_to_end, tooltip="Μετάβαση στο τελευταίο ζεύγος σελίδων.", font_size=12, pady=10)
         self.jump_to_end_btn.pack(side=tk.LEFT, padx=5)
-        
+
         # Add Refresh button here
-        self.refresh_btn = self.create_styled_button(center_frame, "Ανανέωση", self.refresh_scan_folder, tooltip="Επανεξέταση φακέλου σάρωσης", font_size=12, pady=10)
+        self.refresh_btn = self.create_styled_button(self.center_frame, "Ανανέωση", self.refresh_scan_folder, tooltip="Επανεξέταση φακέλου σάρωσης", font_size=12, pady=10)
         self.refresh_btn.pack(side=tk.LEFT, padx=5)
 
 
         # New: Split mode buttons, initially hidden
-        self.complete_split_btn = self.create_styled_button(center_frame, "Ολοκλήρωση Διαχωρισμού", self.complete_split, bg=Style.SUCCESS_COLOR, tooltip="Ολοκλήρωση της λειτουργίας διαχωρισμού.", font_size=12, pady=10)
-        self.cancel_split_btn = self.create_styled_button(center_frame, "Ακύρωση Διαχωρισμού", self.cancel_split, bg=Style.DESTRUCTIVE_COLOR, tooltip="Ακύρωση της λειτουργίας διαχωρισμού.", font_size=12, pady=10)
+        self.complete_split_btn = self.create_styled_button(self.center_frame, "Ολοκλήρωση Διαχωρισμού", self.complete_split, bg=Style.SUCCESS_COLOR, tooltip="Ολοκλήρωση της λειτουργίας διαχωρισμού.", font_size=12, pady=10)
+        self.cancel_split_btn = self.create_styled_button(self.center_frame, "Ακύρωση Διαχωρισμού", self.cancel_split, bg=Style.DESTRUCTIVE_COLOR, tooltip="Ακύρωση της λειτουργίας διαχωρισμού.", font_size=12, pady=10)
         self.complete_split_btn.pack_forget()
         self.cancel_split_btn.pack_forget()
 
-        right_frame = tk.Frame(control_frame, bg=Style.FRAME_BG)
-        right_frame.grid(row=0, column=2, sticky='e') # Changed column to 2
+        self.right_frame = tk.Frame(self.control_frame, bg=Style.FRAME_BG)
+        self.right_frame.grid(row=0, column=2, sticky='e') # Changed column to 2
         # Moved delete_pair_btn here
-        self.delete_pair_btn = self.create_styled_button(right_frame, "Διαγραφή Ζεύγους", self.delete_current_pair, bg=Style.DESTRUCTIVE_COLOR, tooltip="Διαγραφή του τρέχοντος ζεύγους (Delete)", pady=10)
+        self.delete_pair_btn = self.create_styled_button(self.right_frame, "Διαγραφή Ζεύγους", self.delete_current_pair, bg=Style.DESTRUCTIVE_COLOR, tooltip="Διαγραφή του τρέχοντος ζεύγους (Delete)", pady=10)
         self.delete_pair_btn.pack(side=tk.RIGHT) # Pack to the right
 
     # Sets up the image display areas
@@ -1458,23 +1919,23 @@ class ImageScannerApp(tk.Frame):
 
             btn_container = tk.Frame(container, bg=Style.BG_COLOR)
             btn_container.grid(row=1, column=0, sticky='ew', pady=(8,0))
-            
+
             action_frame = tk.Frame(btn_container, bg=Style.BG_COLOR)
             action_frame.pack()
-            
+
             buttons = {}
             # Crop button now directly applies the crop
-            buttons['crop'] = self.create_styled_button(action_frame, "Περικοπή", lambda c=canvas: self.perform_crop(c), font_size=9, pady=4)
+            buttons['crop'] = self.create_styled_button(action_frame, "Περικοπή", lambda c=canvas: self.perform_crop(c), bg=Style.CROP_BTN_COLOR, font_size=9, pady=4)
             buttons['split'] = self.create_styled_button(action_frame, "Διαχωρισμός", lambda c=canvas: self.start_mode('split', c), font_size=9, pady=4)
             buttons['restore'] = self.create_styled_button(action_frame, "Επαναφορά", lambda c=canvas: self.perform_restore(c), font_size=9, pady=4, bg=Style.WARNING_COLOR)
             buttons['delete'] = self.create_styled_button(action_frame, "Διαγραφή", lambda c=canvas: self.perform_delete_single(c), bg=Style.DESTRUCTIVE_COLOR, font_size=9, pady=4)
-            
+
             rotate_frame = tk.Frame(btn_container, bg=Style.BG_COLOR)
             rotate_frame.pack(pady=(5,0))
             buttons['rot_left'] = self.create_styled_button(rotate_frame, "⟲", lambda c=canvas: c.apply_rotation(c.rotation_angle + 90, save_after=True), font_size=12, padx=8, pady=2)
             angle_slider = tk.Scale(rotate_frame, from_=-45, to=45, orient=tk.HORIZONTAL, bg=Style.BG_COLOR, fg=Style.FG_COLOR, highlightthickness=0, troughcolor=Style.BTN_BG, length=150, relief=tk.FLAT, sliderrelief=tk.FLAT, showvalue=0)
             buttons['rot_right'] = self.create_styled_button(rotate_frame, "⟳", lambda c=canvas: c.apply_rotation(c.rotation_angle - 90, save_after=True), font_size=12, padx=8, pady=2)
-            
+
             buttons['crop'].pack(side=tk.LEFT, padx=3)
             buttons['split'].pack(side=tk.LEFT, padx=3) # Pack the new split button
             buttons['restore'].pack(side=tk.LEFT, padx=3)
@@ -1482,7 +1943,7 @@ class ImageScannerApp(tk.Frame):
             buttons['rot_left'].pack(side=tk.LEFT)
             angle_slider.pack(side=tk.LEFT, padx=5)
             buttons['rot_right'].pack(side=tk.LEFT)
-            
+
             angle_slider.config(command=lambda val, c=canvas: c.preview_rotation(val))
             angle_slider.bind("<ButtonRelease-1>", lambda e, c=canvas, s=angle_slider: c.apply_rotation(s.get(), save_after=True))
             canvas.angle_slider = angle_slider
@@ -1514,7 +1975,7 @@ class ImageScannerApp(tk.Frame):
             buttons['cancel_color'].pack(side=tk.LEFT)
 
             buttons['color_adjust_frame'] = color_adjust_frame # Keep reference to the frame
-            
+
             self.action_buttons_list.append(buttons)
 
     # Sets up keyboard shortcuts
@@ -1561,7 +2022,7 @@ class ImageScannerApp(tk.Frame):
             has_right_page = (self.current_index + 1) < len(self.image_files)
             status_text = f"Σελίδες {current_page_num}-{current_page_num+1} από {total_pages}" if has_right_page else f"Σελίδα {current_page_num} από {total_pages}"
             self.status_label.config(text=status_text)
-        
+
         self._check_and_update_breathing_animation() # Re-evaluate breathing after display update
 
     # Shows a snackbar message
@@ -1573,7 +2034,7 @@ class ImageScannerApp(tk.Frame):
         self.snackbar_label = tk.Label(self.controller, text=message, bg=bg_color, fg="#ffffff", font=Style.get_font(11), padx=20, pady=10)
         self.snackbar_label.place(relx=0.5, rely=1.0, anchor='s')
         # No animation for snackbar, just show it instantly
-        self.snackbar_label.place_configure(rely=0.95) 
+        self.snackbar_label.place_configure(rely=0.95)
         self.snackbar_timer = self.after(3000, lambda: self.snackbar_label.destroy())
 
     # Creates a backup of a file
@@ -1604,7 +2065,7 @@ class ImageScannerApp(tk.Frame):
         if self.current_mode: # Already in a mode
             self.show_snackbar(f"Είστε ήδη σε λειτουργία {self.current_mode}. Παρακαλώ ολοκληρώστε ή ακυρώστε πρώτα.", 'warning')
             return
-        
+
         if not canvas.image_path:
             self.show_snackbar("Δεν υπάρχει εικόνα για επεξεργασία.", 'warning')
             return
@@ -1642,11 +2103,11 @@ class ImageScannerApp(tk.Frame):
     def exit_mode(self):
         if self.current_mode == 'split' and self.active_canvas:
             self.active_canvas.exit_splitting_mode()
-        
+
         self.current_mode = None
         self.active_canvas = None
         # The overall editing state is now determined by whether any canvas is still edited
-        self.set_editing_state(any(c.is_edited for c in self.image_canvases)) 
+        self.set_editing_state(any(c.is_edited for c in self.image_canvases))
 
         # Show normal navigation/action buttons
         self.prev_btn.pack(side=tk.LEFT, padx=5)
@@ -1695,7 +2156,7 @@ class ImageScannerApp(tk.Frame):
         canvas.load_image(canvas.image_path) # Reload to reset adjustments and show saved state
         canvas.is_cropped_or_rotated = False # Reset flag after crop and save
         canvas.is_color_adjusted = False # Reset color adjustments after saving
-        
+
         # After saving, we need to re-evaluate if any other canvas is still 'edited'
         any_canvas_edited = any(c.is_edited for c in self.image_canvases)
         self.set_editing_state(any_canvas_edited) # Update global editing state
@@ -1725,7 +2186,7 @@ class ImageScannerApp(tk.Frame):
             return
 
         original_path = self.active_canvas.image_path
-        
+
         try:
             original_image = Image.open(original_path)
             img_w, img_h = original_image.size
@@ -1744,8 +2205,8 @@ class ImageScannerApp(tk.Frame):
             self.show_snackbar("Διαχωρισμός εικόνας...", 'info')
 
             self.transfer_thread = threading.Thread(
-                target=self._transfer_operation_worker, 
-                args=('split_image', (original_path, split_x_coord)), 
+                target=self._transfer_operation_worker,
+                args=('split_image', (original_path, split_x_coord)),
                 daemon=True
             )
             self.transfer_thread.start()
@@ -1813,7 +2274,7 @@ class ImageScannerApp(tk.Frame):
             except FileNotFoundError:
                 self.image_files = [f for f in self.image_files if os.path.exists(f)]
                 self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
-            
+
             # Log timestamp for live performance
             self.scan_timestamps.append(time.time())
 
@@ -1862,7 +2323,7 @@ class ImageScannerApp(tk.Frame):
 
         moves_to_confirm = []
         warnings = []
-        
+
         # Regex to find the 3-digit city code, allowing for no spaces
         code_pattern = re.compile(r'-(\d{3})-')
 
@@ -1878,7 +2339,7 @@ class ImageScannerApp(tk.Frame):
             if not city_path:
                 warnings.append(f"Δεν υπάρχει ρύθμιση για τον κωδικό πόλης '{city_code}' (Βιβλίο: {book_name})")
                 continue
-            
+
             if not os.path.isdir(city_path):
                 warnings.append(f"Ο κατάλογος για τον κωδικό '{city_code}' δεν βρέθηκε: {city_path}")
                 continue
@@ -1887,14 +2348,14 @@ class ImageScannerApp(tk.Frame):
             today = datetime.now()
             day, month = today.day, today.month
             date_formats_to_check = [f"{day:02d}-{month:02d}", f"{day}-{month:02d}", f"{day}-{month}"]
-            
+
             date_folder_path = None
             for fmt in date_formats_to_check:
                 path_to_check = os.path.join(city_path, fmt)
                 if os.path.isdir(path_to_check):
                     date_folder_path = path_to_check
                     break
-            
+
             # If no date folder exists, determine the new one to create
             if not date_folder_path:
                 new_date_folder_name = today.strftime('%d-%m')
@@ -1902,8 +2363,8 @@ class ImageScannerApp(tk.Frame):
 
             source_path = os.path.join(self.todays_books_folder, book_name)
             moves_to_confirm.append({
-                'source': source_path, 
-                'destination_folder': date_folder_path, 
+                'source': source_path,
+                'destination_folder': date_folder_path,
                 'book_name': book_name
             })
 
@@ -1915,10 +2376,10 @@ class ImageScannerApp(tk.Frame):
         confirmation_message = "Θα πραγματοποιηθούν οι παρακάτω μεταφορές:\n\n"
         for move in moves_to_confirm:
             confirmation_message += f"'{move['book_name']}'\n  -> '{move['destination_folder']}'\n"
-        
+
         if warnings:
             confirmation_message += "\nΠροειδοποιήσεις:\n" + "\n".join(warnings)
-        
+
         confirmation_message += "\n\nΕίστε σίγουροι ότι θέλετε να συνεχίσετε;"
 
         if not messagebox.askyesno("Επιβεβαίωση Μεταφοράς", confirmation_message):
@@ -1998,13 +2459,13 @@ class ImageScannerApp(tk.Frame):
     def update_stats(self):
         # Request full stats calculation from worker
         self.scan_worker_command_queue.put(('calculate_today_stats', None))
-        
+
         # Calculate live performance locally
         now = time.time()
         # Remove timestamps older than the performance window
         while self.scan_timestamps and self.scan_timestamps[0] < now - PERFORMANCE_WINDOW_SECONDS:
             self.scan_timestamps.popleft()
-        
+
         if self.scan_timestamps:
             # Calculate rate based on the number of scans in the window
             scans_in_window = len(self.scan_timestamps)
@@ -2065,35 +2526,35 @@ class ImageScannerApp(tk.Frame):
             all_book_names = sorted(list(set(current_book_folders.keys()) | set(moved_today_books.keys())))
 
             if not all_book_names:
-                tk.Label(self.todays_books_frame, text="Δεν υπάρχουν βιβλία για σήμερα.", 
+                tk.Label(self.todays_books_frame, text="Δεν υπάρχουν βιβλία για σήμερα.",
                          bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).pack(padx=10, pady=5, anchor='w')
                 return
 
             # 4. Display the combined list
             for folder_name in all_book_names:
                 display_name = folder_name[:20] + "..." if len(folder_name) > 20 else folder_name
-                
+
                 entry_frame = tk.Frame(self.todays_books_frame, bg=Style.FRAME_BG)
                 entry_frame.pack(fill=tk.X, padx=5, pady=2)
 
-                tk.Label(entry_frame, text=display_name, 
+                tk.Label(entry_frame, text=display_name,
                          bg=Style.FRAME_BG, fg=Style.FG_COLOR, font=Style.get_font(10, 'bold')).pack(side=tk.LEFT, anchor='w')
-                
+
                 if folder_name in moved_today_books:
                     page_count = moved_today_books[folder_name]
-                    tk.Label(entry_frame, text=f" ({page_count} σελ.)", 
+                    tk.Label(entry_frame, text=f" ({page_count} σελ.)",
                              bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(9)).pack(side=tk.LEFT, padx=(5,0), anchor='w')
-                    tk.Label(entry_frame, text=" (DATA)", 
+                    tk.Label(entry_frame, text=" (DATA)",
                              bg=Style.FRAME_BG, fg=Style.SUCCESS_COLOR, font=Style.get_font(9, 'bold')).pack(side=tk.LEFT, padx=(5,0), anchor='w')
                 else: # It must be in the current_book_folders
                     page_count = current_book_folders[folder_name]
-                    tk.Label(entry_frame, text=f" ({page_count} σελίδες)", 
+                    tk.Label(entry_frame, text=f" ({page_count} σελίδες)",
                              bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(9)).pack(side=tk.LEFT, padx=(5,0), anchor='w')
 
         except Exception as e:
-            tk.Label(self.todays_books_frame, text=f"Σφάλμα φόρτωσης βιβλίων: {e}", 
+            tk.Label(self.todays_books_frame, text=f"Σφάλμα φόρτωσης βιβλίων: {e}",
                      bg=Style.FRAME_BG, fg=Style.DESTRUCTIVE_COLOR, font=Style.get_font(10)).pack(padx=10, pady=5, anchor='w')
-        
+
         # Update scroll region after adding content
         self.todays_books_canvas.update_idletasks()
         self.todays_books_canvas.config(scrollregion=self.todays_books_canvas.bbox("all"))
@@ -2118,7 +2579,7 @@ class ImageScannerApp(tk.Frame):
             if self.observer.is_alive():
                 self.observer.stop()
                 self.observer.join()
-            
+
             # Stop the scan worker
             self.scan_worker_command_queue.put(('stop', None))
             if self.scan_worker.is_alive():
@@ -2133,7 +2594,7 @@ class SettingsFrame(tk.Frame):
         self.controller = controller
         self.paths = {"scan": tk.StringVar(), "today": tk.StringVar()}
         self.image_load_timeout_var = tk.StringVar(value=str(DEFAULT_IMAGE_LOAD_TIMEOUT_MS))
-        
+
         # New: City path settings
         self.city_paths = {}
         self.city_code_entry_var = tk.StringVar()
@@ -2143,19 +2604,49 @@ class SettingsFrame(tk.Frame):
         self.setup_ui()
         self.load_settings()
 
+    def update_theme(self):
+        # This frame is simple, so we can recursively update it.
+        self._recursive_apply_theme(self)
+        # Manually update special widgets
+        self.start_btn.config(bg=Style.SUCCESS_COLOR)
+        for child in self.main_frame.winfo_children():
+            if isinstance(child, tk.LabelFrame):
+                child.config(bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR)
+                self._recursive_apply_theme(child)
+
+
+    def _recursive_apply_theme(self, widget):
+        try:
+            widget.configure(bg=Style.BG_COLOR)
+        except tk.TclError:
+            pass
+
+        if isinstance(widget, (tk.Label, tk.Button)):
+            try:
+                widget.configure(fg=Style.FG_COLOR)
+            except tk.TclError:
+                pass
+        if isinstance(widget, tk.Entry):
+            widget.config(readonlybackground=Style.BTN_BG, fg=Style.FG_COLOR, insertbackground=Style.FG_COLOR)
+        if isinstance(widget, tk.Button) and widget != self.start_btn:
+             widget.config(bg=Style.BTN_BG, fg=Style.BTN_FG)
+
+        for child in widget.winfo_children():
+            self._recursive_apply_theme(child)
+
     # Sets up the UI for the settings frame
     def setup_ui(self):
         self.pack(expand=True)
-        main_frame = tk.Frame(self, bg=Style.BG_COLOR, padx=40, pady=30)
-        main_frame.pack(expand=True)
-        main_frame.grid_columnconfigure(1, weight=1)
+        self.main_frame = tk.Frame(self, bg=Style.BG_COLOR, padx=40, pady=30)
+        self.main_frame.pack(expand=True)
+        self.main_frame.grid_columnconfigure(1, weight=1)
 
-        tk.Label(main_frame, text="Ρύθμιση Καταλόγων Ροής Εργασίας", bg=Style.BG_COLOR, fg=Style.FG_COLOR, font=Style.get_font(16, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 25))
-        
+        tk.Label(self.main_frame, text="Ρύθμιση Καταλόγων Ροής Εργασίας", bg=Style.BG_COLOR, fg=Style.FG_COLOR, font=Style.get_font(16, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 25))
+
         labels = {"scan": "1. Φάκελος Σάρωσης", "today": "2. Φάκελος Σημερινών Βιβλίων"}
         for i, (name, label_text) in enumerate(labels.items(), 1):
-            tk.Label(main_frame, text=label_text, bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).grid(row=i, column=0, sticky='w', pady=(10,2), padx=(0,20))
-            entry_frame = tk.Frame(main_frame, bg=Style.BG_COLOR)
+            tk.Label(self.main_frame, text=label_text, bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).grid(row=i, column=0, sticky='w', pady=(10,2), padx=(0,20))
+            entry_frame = tk.Frame(self.main_frame, bg=Style.BG_COLOR)
             entry_frame.grid(row=i, column=1, sticky='ew')
             entry = tk.Entry(entry_frame, textvariable=self.paths[name], state='readonly', width=70, readonlybackground=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, padx=(0,10))
@@ -2164,13 +2655,13 @@ class SettingsFrame(tk.Frame):
             btn.bind("<Leave>", lambda e, b=btn: b.config(bg=Style.BTN_BG))
             btn.pack(side=tk.LEFT)
 
-        tk.Label(main_frame, text="3. Χρόνος Αναμονής Φόρτωσης Εικόνας (ms)", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).grid(row=3, column=0, sticky='w', pady=(10,2))
-        timeout_entry = tk.Entry(main_frame, textvariable=self.image_load_timeout_var, width=15, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT, insertbackground=Style.FG_COLOR)
+        tk.Label(self.main_frame, text="3. Χρόνος Αναμονής Φόρτωσης Εικόνας (ms)", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).grid(row=3, column=0, sticky='w', pady=(10,2))
+        timeout_entry = tk.Entry(self.main_frame, textvariable=self.image_load_timeout_var, width=15, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT, insertbackground=Style.FG_COLOR)
         timeout_entry.grid(row=3, column=1, sticky='w', ipady=8)
         ToolTip(timeout_entry, "Ο χρόνος (σε ms) που η εφαρμογή περιμένει ένα αρχείο εικόνας να είναι πλήρως διαθέσιμο.")
 
         # New: City Path Configuration UI
-        city_frame = tk.LabelFrame(main_frame, text="4. Ρυθμίσεις Πόλεων", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE, padx=10, pady=10)
+        city_frame = tk.LabelFrame(self.main_frame, text="4. Ρυθμίσεις Πόλεων", bg=Style.FRAME_BG, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE, padx=10, pady=10)
         city_frame.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(20, 0))
         city_frame.grid_columnconfigure(0, weight=1)
         city_frame.grid_columnconfigure(1, weight=1)
@@ -2182,7 +2673,7 @@ class SettingsFrame(tk.Frame):
         self.city_listbox = tk.Listbox(list_frame, bg=Style.BTN_BG, fg=Style.FG_COLOR, font=Style.get_font(10), relief=tk.FLAT, selectbackground=Style.ACCENT_COLOR, highlightthickness=0, height=5)
         self.city_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.city_listbox.bind('<<ListboxSelect>>', self._on_city_select)
-        
+
         scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.city_listbox.yview, bg=Style.BTN_BG, troughcolor=Style.BG_COLOR)
         scrollbar.pack(side=tk.RIGHT, fill="y")
         self.city_listbox.config(yscrollcommand=scrollbar.set)
@@ -2190,7 +2681,7 @@ class SettingsFrame(tk.Frame):
         # Entry fields and buttons for adding/editing
         controls_frame = tk.Frame(city_frame, bg=Style.FRAME_BG)
         controls_frame.grid(row=0, column=1, sticky='ew')
-        
+
         tk.Label(controls_frame, text="Κωδικός (XXX):", bg=Style.FRAME_BG, fg=Style.FG_COLOR).grid(row=0, column=0, sticky='w')
         code_entry = tk.Entry(controls_frame, textvariable=self.city_code_entry_var, width=10, bg=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
         code_entry.grid(row=0, column=1, sticky='w', pady=2)
@@ -2212,10 +2703,10 @@ class SettingsFrame(tk.Frame):
         remove_btn.pack(side=tk.LEFT, padx=5)
 
 
-        start_btn = tk.Button(main_frame, text="Έναρξη Σάρωσης", command=self.on_ok, bg=Style.SUCCESS_COLOR, fg="#ffffff", font=Style.get_font(12, "bold"), relief=tk.FLAT, padx=20, pady=10, activebackground=lighten_color(Style.SUCCESS_COLOR), activeforeground="#ffffff")
-        start_btn.grid(row=5, column=0, columnspan=2, pady=(30,0)) # Adjusted row
-        start_btn.bind("<Enter>", lambda e, b=start_btn, c=lighten_color(Style.SUCCESS_COLOR): b.config(bg=c))
-        start_btn.bind("<Leave>", lambda e, b=start_btn, c=Style.SUCCESS_COLOR: b.config(bg=c))
+        self.start_btn = tk.Button(self.main_frame, text="Έναρξη Σάρωσης", command=self.on_ok, bg=Style.SUCCESS_COLOR, fg="#ffffff", font=Style.get_font(12, "bold"), relief=tk.FLAT, padx=20, pady=10, activebackground=lighten_color(Style.SUCCESS_COLOR), activeforeground="#ffffff")
+        self.start_btn.grid(row=5, column=0, columnspan=2, pady=(30,0)) # Adjusted row
+        self.start_btn.bind("<Enter>", lambda e, b=self.start_btn, c=lighten_color(Style.SUCCESS_COLOR): b.config(bg=c))
+        self.start_btn.bind("<Leave>", lambda e, b=self.start_btn, c=Style.SUCCESS_COLOR: b.config(bg=c))
 
     # Opens a directory selection dialog
     def ask_dir(self, name):
@@ -2234,21 +2725,21 @@ class SettingsFrame(tk.Frame):
     def _on_city_select(self, event):
         selection = self.city_listbox.curselection()
         if not selection: return
-        
+
         selected_text = self.city_listbox.get(selection[0])
         code, path = selected_text.split(':', 1)
-        
+
         self.city_code_entry_var.set(code.strip())
         self.city_path_entry_var.set(path.strip())
 
     def _add_or_update_city(self):
         code = self.city_code_entry_var.get().strip()
         path = self.city_path_entry_var.get().strip()
-        
+
         if not code or not path:
             messagebox.showwarning("Ελλιπή Στοιχεία", "Παρακαλώ εισάγετε κωδικό και διαδρομή.")
             return
-        
+
         if not code.isdigit() or len(code) != 3:
             messagebox.showwarning("Λάθος Κωδικός", "Ο κωδικός πρέπει να είναι 3 ψηφία.")
             return
@@ -2263,10 +2754,10 @@ class SettingsFrame(tk.Frame):
         if not selection:
             messagebox.showwarning("Καμία Επιλογή", "Παρακαλώ επιλέξτε μια πόλη για αφαίρεση.")
             return
-            
+
         selected_text = self.city_listbox.get(selection[0])
         code = selected_text.split(':', 1)[0].strip()
-        
+
         if code in self.city_paths:
             del self.city_paths[code]
             self._update_city_listbox()
@@ -2282,18 +2773,26 @@ class SettingsFrame(tk.Frame):
                 for key in self.paths: self.paths[key].set(settings.get(key, ""))
                 self.image_load_timeout_var.set(str(settings.get("image_load_timeout_ms", DEFAULT_IMAGE_LOAD_TIMEOUT_MS)))
                 self.city_paths = settings.get("city_paths", {})
-                self._update_city_listbox()
+                if self.city_listbox: self._update_city_listbox()
         except (IOError, json.JSONDecodeError) as e: print(f"ERROR: Could not load config: {e}")
 
     # Saves current settings
     def save_settings(self):
-        settings = {key: var.get() for key, var in self.paths.items()}
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
+            else: settings = {}
+        except (IOError, json.JSONDecodeError): settings = {}
+
+        path_settings = {key: var.get() for key, var in self.paths.items()}
+        settings.update(path_settings)
+
         try:
             timeout_val = int(self.image_load_timeout_var.get())
             settings["image_load_timeout_ms"] = max(100, timeout_val)
         except ValueError:
             settings["image_load_timeout_ms"] = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
-        
+
         settings["city_paths"] = self.city_paths # Save city paths
 
         try:
@@ -2306,7 +2805,7 @@ class SettingsFrame(tk.Frame):
         app_settings = {key: var.get() for key, var in self.paths.items()}
         try: app_settings["image_load_timeout_ms"] = int(self.image_load_timeout_var.get())
         except ValueError: app_settings["image_load_timeout_ms"] = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
-        
+
         app_settings["city_paths"] = self.city_paths # Pass city paths to the main app
 
         if not all(app_settings.values()):
@@ -2319,11 +2818,30 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("DigiPage Scanner")
+        self.load_config_and_apply_theme()
         self.configure(bg=Style.BG_COLOR)
         self._frame = None
         self.is_fullscreen = False
         self.bind("<F11>", self.toggle_fullscreen)
         self.show_frame(SettingsFrame)
+
+    def load_config_and_apply_theme(self):
+        theme_name = "Neutral Grey" # Default
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    settings = json.load(f)
+                    theme_name = settings.get("theme", "Neutral Grey")
+        except (IOError, json.JSONDecodeError):
+            pass # Stick to default if config is bad
+
+        Style.load_theme(theme_name)
+
+    def update_theme(self):
+        """Recursively updates the theme for the entire application."""
+        self.configure(bg=Style.BG_COLOR)
+        if self._frame and hasattr(self._frame, 'update_theme'):
+            self._frame.update_theme()
 
     # Toggles fullscreen mode
     def toggle_fullscreen(self, event=None):
@@ -2355,7 +2873,7 @@ class App(tk.Tk):
     # Displays a new frame in the window
     def show_frame(self, frame_class, settings=None):
         if self._frame: self._frame.destroy()
-        
+
         self._frame = frame_class(self, self, settings) if settings else frame_class(self, self)
         self._frame.grid(row=0, column=0, sticky='nsew')
         self.grid_rowconfigure(0, weight=1)
