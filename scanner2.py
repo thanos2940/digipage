@@ -164,9 +164,7 @@ class ZoomPanCanvas(tk.Canvas):
         self.is_cropping = False
         self.crop_confirm_cancel_frame = None
         self._hover_check_id = None # To manage the after() call for leaving
-        if self.tools_overlay:
-            # Bind events to the overlay and its children to prevent hiding when the mouse moves onto them
-            self._bind_recursive(self.tools_overlay)
+        # Defer binding until widgets are created.
 
         # New: Color adjustment attributes
         self.brightness = 0.0 # -1.0 to 1.0
@@ -879,6 +877,11 @@ class ZoomPanCanvas(tk.Canvas):
         self.coords(self.split_line_id, split_x_on_canvas, img_tl_y, split_x_on_canvas, img_tl_y + disp_h)
 
     # --- Overlay and Crop Mode Methods ---
+
+    def finalize_overlay_setup(self):
+        """Binds events to the overlay and all its children recursively."""
+        if self.tools_overlay:
+            self._bind_recursive(self.tools_overlay)
 
     def _bind_recursive(self, widget):
         widget.bind("<Enter>", self.on_enter_overlay)
@@ -2029,6 +2032,8 @@ class ImageScannerApp(tk.Frame):
             # Create the button container (overlay) but don't place it yet.
             # It will be managed by the canvas itself.
             btn_container = tk.Frame(container, bg=Style.BG_COLOR)
+            # Initialize the geometry manager for the overlay frame so it can be shown/hidden later.
+            btn_container.place_forget()
 
             canvas = ZoomPanCanvas(container, self, tools_overlay=btn_container)
             canvas.grid(row=0, column=0, sticky='nsew')
@@ -2091,6 +2096,9 @@ class ImageScannerApp(tk.Frame):
             buttons['color_adjust_frame'] = color_adjust_frame # Keep reference to the frame
 
             self.action_buttons_list.append(buttons)
+
+            # Finalize the overlay setup now that all widgets are created
+            canvas.finalize_overlay_setup()
 
     # Sets up keyboard shortcuts
     def setup_keybinds(self):
