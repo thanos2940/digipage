@@ -150,7 +150,7 @@ class ToolTip:
 
 class ZoomPanCanvas(tk.Canvas):
     # Initializes the canvas for image display, zoom, and pan
-    def __init__(self, parent, app_ref):
+    def __init__(self, parent, app_ref, tools_overlay=None):
         super().__init__(parent, bg=Style.BG_COLOR, highlightthickness=0)
         self.app_ref = app_ref
         self.true_original_image = self.original_image = self.image_path = self.photo_image = self.canvas_image_id = None
@@ -158,6 +158,15 @@ class ZoomPanCanvas(tk.Canvas):
         self.crop_rect_id, self.crop_handles, self.drag_info = None, {}, {'item': None, 'x': 0, 'y': 0}
         self.hq_redraw_timer = self.angle_slider = None
         self.is_cropped_or_rotated = False
+
+        # --- New for overlay controls ---
+        self.tools_overlay = tools_overlay
+        self.is_cropping = False
+        self.crop_confirm_cancel_frame = None
+        self._hover_check_id = None # To manage the after() call for leaving
+        if self.tools_overlay:
+            # Bind events to the overlay and its children to prevent hiding when the mouse moves onto them
+            self._bind_recursive(self.tools_overlay)
 
         # New: Color adjustment attributes
         self.brightness = 0.0 # -1.0 to 1.0
@@ -209,6 +218,8 @@ class ZoomPanCanvas(tk.Canvas):
         self.bind('<MouseWheel>', self.on_mouse_wheel_zoom)
         self.bind('<Button-4>', self.on_mouse_wheel_zoom)
         self.bind('<Button-5>', self.on_mouse_wheel_zoom)
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Leave>", self.on_leave)
 
     # Loads an image from a path with a timeout
     def load_image(self, path, timeout_ms=DEFAULT_IMAGE_LOAD_TIMEOUT_MS):
@@ -269,12 +280,19 @@ class ZoomPanCanvas(tk.Canvas):
 
 
     # Displays the image on the canvas
-    def show_image(self):
+    def show_image(self, crop_mode=False):
         if not self.original_image: self.clear(); return
         self.is_zoomed = False
-        canvas_w, canvas_h = self.winfo_width(), self.winfo_height()
+        canvas_w = self.winfo_width()
+        canvas_h = self.winfo_height()
+
+        # In crop mode, reserve space at the bottom for Confirm/Cancel buttons
+        if crop_mode:
+            canvas_h -= 60 # Adjust this value based on button bar height
+
         if canvas_w < 10 or canvas_h < 10:
-            self.after(100, self.show_image); return
+            self.after(100, lambda: self.show_image(crop_mode)); return
+
         self.xview_moveto(0); self.yview_moveto(0)
         img_w, img_h = self.original_image.size
         self.zoom_level = min(canvas_w / img_w, canvas_h / img_h)
@@ -859,6 +877,101 @@ class ZoomPanCanvas(tk.Canvas):
         split_x_on_canvas = img_tl_x + disp_w * self.split_line_x_ratio
 
         self.coords(self.split_line_id, split_x_on_canvas, img_tl_y, split_x_on_canvas, img_tl_y + disp_h)
+
+    # --- Overlay and Crop Mode Methods ---
+
+    def _bind_recursive(self, widget):
+        widget.bind("<Enter>", self.on_enter_overlay)
+        widget.bind("<Leave>", self.on_leave_overlay)
+        for child in widget.winfo_children():
+            self._bind_recursive(child)
+
+    def on_enter(self, event=None):
+        if self._hover_check_id:
+            self.after_cancel(self._hover_check_id)
+            self._hover_check_id = None
+        if self.tools_overlay and not self.is_cropping and self.app_ref.current_mode is None:
+            self.tools_overlay.place(in_=self, relx=0.5, rely=1.0, anchor='s', y=-10)
+
+    def on_leave(self, event=None):
+        if self._hover_check_id:
+            self.after_cancel(self._hover_check_id)
+        self._hover_check_id = self.after(50, self._check_leave)
+
+    def on_enter_overlay(self, event=None):
+        # When mouse enters the overlay, cancel any pending check to hide it
+        if self._hover_check_id:
+            self.after_cancel(self._hover_check_id)
+            self._hover_check_id = None
+
+    def on_leave_overlay(self, event=None):
+        # When mouse leaves the overlay, start a check to hide it
+        if self._hover_check_id:
+            self.after_cancel(self._hover_check_id)
+        self._hover_check_id = self.after(50, self._check_leave)
+
+    def _check_leave(self):
+        # Hide the overlay only if the mouse is not over the canvas or the overlay itself
+        try:
+            widget_under_cursor = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+            if widget_under_cursor not in (self, self.tools_overlay) and not self._is_child_of_overlay(widget_under_cursor):
+                 if self.tools_overlay:
+                    self.tools_overlay.place_forget()
+        except (KeyError, tk.TclError): # Catch errors if widgets are destroyed during check
+            pass
+        self._hover_check_id = None
+
+    def _is_child_of_overlay(self, widget):
+        if widget is None or self.tools_overlay is None:
+            return False
+        parent = widget
+        while parent is not None:
+            if parent == self.tools_overlay:
+                return True
+            parent = parent.master
+        return False
+
+    def start_crop_mode(self):
+        if not self.image_path or self.is_cropping: return
+        self.is_cropping = True
+        if self.tools_overlay: self.tools_overlay.place_forget()
+
+        if self.crop_confirm_cancel_frame is None:
+            self.crop_confirm_cancel_frame = tk.Frame(self, bg=Style.BG_COLOR)
+            confirm_btn = self.app_ref.create_styled_button(self.crop_confirm_cancel_frame, "Confirm", self.confirm_crop, bg=Style.SUCCESS_COLOR, font_size=9, pady=6, padx=10)
+            cancel_btn = self.app_ref.create_styled_button(self.crop_confirm_cancel_frame, "Cancel", self.cancel_crop, bg=Style.DESTRUCTIVE_COLOR, font_size=9, pady=6, padx=10)
+            confirm_btn.pack(side=tk.LEFT, padx=5)
+            cancel_btn.pack(side=tk.LEFT, padx=5)
+
+        self.crop_confirm_cancel_frame.place(in_=self, relx=0.5, rely=1.0, anchor='s', y=-10)
+        self.show_image(crop_mode=True)
+
+    def confirm_crop(self):
+        self.app_ref.perform_crop(self)
+        self.exit_crop_mode()
+
+    def cancel_crop(self):
+        # Just exit crop mode, reset the view which will redraw the original crop box
+        self.is_cropped_or_rotated = False # Assume cancel discards the current crop attempt
+        self.app_ref.set_editing_state(self.is_edited)
+        self.exit_crop_mode()
+        self.reset_view() # Reset to be sure
+
+    def exit_crop_mode(self):
+        self.is_cropping = False
+        if self.crop_confirm_cancel_frame:
+            self.crop_confirm_cancel_frame.place_forget()
+        self.show_image() # Redraw without crop mode padding
+
+        # After a short delay, check if the mouse is back over the canvas to show the overlay
+        self.after(100, self._check_enter)
+
+    def _check_enter(self):
+        try:
+            if self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery()) == self:
+                self.on_enter()
+        except (KeyError, tk.TclError): # Catch errors if widgets are destroyed during check
+            pass
 
 
 class NewImageHandler(FileSystemEventHandler):
@@ -1913,19 +2026,20 @@ class ImageScannerApp(tk.Frame):
             container.grid_rowconfigure(0, weight=1)
             container.grid_columnconfigure(0, weight=1)
 
-            canvas = ZoomPanCanvas(container, self)
+            # Create the button container (overlay) but don't place it yet.
+            # It will be managed by the canvas itself.
+            btn_container = tk.Frame(container, bg=Style.BG_COLOR)
+
+            canvas = ZoomPanCanvas(container, self, tools_overlay=btn_container)
             canvas.grid(row=0, column=0, sticky='nsew')
             self.image_canvases.append(canvas)
-
-            btn_container = tk.Frame(container, bg=Style.BG_COLOR)
-            btn_container.grid(row=1, column=0, sticky='ew', pady=(8,0))
 
             action_frame = tk.Frame(btn_container, bg=Style.BG_COLOR)
             action_frame.pack()
 
             buttons = {}
-            # Crop button now directly applies the crop
-            buttons['crop'] = self.create_styled_button(action_frame, "Περικοπή", lambda c=canvas: self.perform_crop(c), bg=Style.CROP_BTN_COLOR, font_size=9, pady=4)
+            # Crop button now enters crop mode
+            buttons['crop'] = self.create_styled_button(action_frame, "Περικοπή", lambda c=canvas: c.start_crop_mode(), bg=Style.CROP_BTN_COLOR, font_size=9, pady=4)
             buttons['split'] = self.create_styled_button(action_frame, "Διαχωρισμός", lambda c=canvas: self.start_mode('split', c), font_size=9, pady=4)
             buttons['restore'] = self.create_styled_button(action_frame, "Επαναφορά", lambda c=canvas: self.perform_restore(c), font_size=9, pady=4, bg=Style.WARNING_COLOR)
             buttons['delete'] = self.create_styled_button(action_frame, "Διαγραφή", lambda c=canvas: self.perform_delete_single(c), bg=Style.DESTRUCTIVE_COLOR, font_size=9, pady=4)
