@@ -1,94 +1,118 @@
-DigiPage Scanner: Technical Documentation & Workflow
-====================================================
+DigiPage Scanner: High-Volume Scanning Assistant
+================================================
 
 1\. Primary Goal & Design Philosophy
 ------------------------------------
 
-The **DigiPage Scanner** is a specialized desktop application built with Python and Tkinter, designed to solve a critical bottleneck in high-volume book scanning workflows: **post-scan quality control and processing**.
+The **DigiPage Scanner** is a specialized desktop application designed to streamline high-volume book and document digitalization workflows. Its primary purpose is to solve a critical bottleneck: **immediate post-scan quality control and processing**.
 
-The core design philosophy is to create an efficient, operator-focused environment that minimizes manual steps and maximizes visual feedback. The main point of the program is to provide an **oversized, dual-pane view of scanned pages**, allowing the operator to inspect and edit them on the fly before they are grouped into books and archived. This prevents errors from propagating downstream and eliminates the need for a separate, time-consuming quality control step after the scanning is complete.
+The application is built around an efficient, operator-focused environment that minimizes manual steps and maximizes visual feedback. The core of the program is an **oversized, dual-pane viewer** that instantly displays newly scanned pages. This allows the operator to inspect, edit, and correct images on the fly, preventing errors from propagating downstream and eliminating the need for a separate, time-consuming quality control stage after all scanning is complete.
 
-2\. Core Workflow
------------------
+2\. Core Operator Workflow
+--------------------------
 
-The application guides the user through a clear, linear process:
+The application is designed to follow a simple, linear process for the operator:
 
-1.  **Configuration:** On first launch, the operator defines the key folders for the workflow: a **Scan Folder** to be monitored, and a **Today's Books Folder** to serve as a temporary staging area. Crucially, they also map 3-digit **City Codes** to their final network storage paths (e.g., Code 297 -> \\\\server\\data\\Α ΚΟΡΙΝΘΟΥ).
+1.  **Scan & View:** The operator presses the "scan" button on their physical scanning machine. The scanner saves the new page images (typically an open-book layout) to a pre-configured "Scan Folder" on the local network. The DigiPage application, which actively monitors this folder, immediately detects the new files and displays them in the large dual-pane canvases for inspection.
     
-2.  **Live Scanning & Viewing:** The operator starts scanning. The application's file watcher immediately detects new images in the Scan Folder and displays them in the dual-pane viewer, automatically advancing to the latest pair.
+2.  **Inspect & Correct:** The operator reviews the two large page images for errors (e.g., skewed alignment, unwanted margins, color inaccuracies). If corrections are needed, they use the intuitive, per-image toolset to crop, rotate, or adjust colors.
     
-3.  **On-the-Fly Editing:** The operator inspects the two large images. Using the dedicated toolset under each image, they can instantly correct rotation, crop unwanted edges, or adjust brightness/contrast. These edits are destructive and save directly to the image file, ensuring the corrections are permanent.
+3.  **Iterate:** The operator repeats steps 1 and 2 for every page of the book. The application automatically advances to show the latest pair of scanned pages, allowing for a continuous, uninterrupted workflow.
     
-4.  **Book Assembly:** Once all pages for a book are scanned and corrected, the operator enters the book's name (often from a QR code) and clicks "Create." The application gathers all loose image files from the Scan Folder and moves them into a new, named subfolder within the "Today's Books" staging area.
+4.  **Assemble the Book:** Once the entire book is scanned and corrected, the operator scans the book's unique QR code. This code, which represents the book's name, is entered into the "Book Name" field. Clicking "Create" gathers all the individual page images from the "Scan Folder" and moves them into a newly created, named subfolder within a temporary "Today's Books" staging area.
     
-5.  **Automated Archival:** At any time, the operator can click "Transfer to Data." The application processes all folders in the staging area. For each book, it:
+5.  **Archive to Final Destination:** At any point, the operator can click the **"Transfer to Data"** button. The application intelligently processes every book folder in the "Today's Books" staging area. For each book, it automatically:
     
-    *   Parses the folder name to find the 3-digit city code.
+    *   Parses the book's name to identify a unique city code (e.g., "-001-").
         
-    *   Finds the corresponding destination path from the settings.
+    *   Looks up the pre-configured network path corresponding to that city code.
         
-    *   Creates a subfolder with the current date (e.g., DD-MM) if it doesn't exist.
+    *   Creates a new subfolder named after the current date (e.g., DD-MM) inside the city's main data folder if one doesn't already exist.
         
-    *   Moves the book folder into this dated directory.
-        
-    *   Records the entire transaction (book name, page count, final path, timestamp) in books\_complete\_log.json.
+    *   Moves the completed book folder into this dated directory, finalizing the archival process.
         
 
-3\. Feature Breakdown & Implementation Choices
-----------------------------------------------
+3\. Features & User Interface (UI) Explained
+--------------------------------------------
 
-### Class: ImageScannerApp
+### Main Display & Editing Tools
 
-This is the main class that orchestrates the entire application.
+The UI is designed for clarity and immediate access to critical tools.
 
-*   **UI Management:** It sets up the main window, including the central image display area, the right-hand sidebar for stats and controls, and the bottom control bar for navigation.
+*   **Dual-Pane Canvases:** The majority of the screen is dedicated to two large canvases that display the left and right pages of a scan. This oversized view is essential for spotting imperfections without needing to zoom in for every page.
     
-*   **Workflow Logic:** It contains the methods for create\_new\_book(), transfer\_to\_data(), and navigation (next\_pair, prev\_pair).
+*   **Contextual Editing Tools:** Positioned directly beneath each image canvas are the tools for editing _that specific image_. This proximity makes the workflow intuitive and fast.
     
-*   **Threading & Queues:** To prevent the UI from freezing during file I/O (which can be slow, especially over a network), all significant file operations (moving, deleting, saving) are offloaded to a background thread (\_transfer\_operation\_worker). Communication between the main UI thread and the worker thread is handled safely using queue.Queue. A ScanWorker thread is also used to handle background stat calculations without impacting UI performance.
-    
-*   **Performance Tracking:**
-    
-    *   **Live Performance:** A collections.deque (scan\_timestamps) is used to store the timestamps of the last few scans. A recurring function (update\_stats) prunes timestamps older than 20 seconds and calculates the pages/minute based on the remaining count. A deque was chosen for its efficiency in adding and removing items from both ends.
+    *   **Cropping:** An easy-to-use cropping tool. Clicking the "Crop" button activates draggable handles on the image's border. The operator can adjust the crop box and apply the change with a single click.
         
-    *   **Total Performance:** The total page count for the day is calculated by the ScanWorker thread, which sums the pages in the scan folder, the pages in the "Today's Books" folder, and the pages recorded in the books\_complete\_log.json for the current date. This provides a comprehensive view of the day's total output.
+    *   **Rotation:** Includes buttons for quick 90-degree rotations and a central slider for fine-tuning the angle. Releasing the slider automatically applies and saves the rotation.
+        
+    *   **Color Correction:** Sliders for **Brightness** and **Contrast** allow for manual adjustments. "Auto" buttons trigger automatic lighting and color balance corrections. Changes can be saved or reverted with dedicated buttons.
+        
+    *   **Splitting:** A "Split" mode allows the operator to draw a vertical line on a single scanned image (e.g., a full book spread) and have the application automatically cut it into two separate page files.
+        
+    *   **Deletion:** Destructive actions are clearly marked. A button is available to delete a single page, while a larger button in the main control bar deletes the currently displayed pair of pages. All deletions require confirmation.
+        
+    *   **Restore:** Each edit creates a backup of the original image. The "Restore" button allows the operator to discard all changes and revert to the original scanned file.
         
 
-### Class: ZoomPanCanvas
+### Sidebar & Workflow Management
 
-This custom Tkinter Canvas is the heart of the application's viewing and editing experience.
+The right-hand sidebar contains controls for managing the overall workflow and tracking progress.
 
-*   **Image Display:** It handles loading images from disk (using Pillow/PIL), calculating the correct aspect ratio to fit them within the canvas, and displaying them. An image cache (self.app\_ref.image\_cache) is used to keep recently viewed images in memory for faster navigation.
+*   **Performance Stats:** Displays live and session-total statistics, including pages-per-minute, scans pending in the input folder, books staged for transfer, and the total number of pages processed that day.
     
-*   **On-the-Fly Editing Implementation:**
+*   **Book Creation:** A simple text entry field for the book name (from the QR code) and a "Create" button to execute the book assembly step.
     
-    *   **Rotation & Color:** These edits are applied to the in-memory Pillow image object. When the user saves (e.g., by releasing the rotation slider or clicking "Save" for color), the save\_image\_to\_disk method is called, which overwrites the original file. A backup of the original is created on the first edit to allow for restoration.
-        
-    *   **Cropping:** The crop box is a visual overlay drawn on the canvas. When the user initiates a crop, the coordinates of the drawn rectangle are translated into pixel coordinates on the original image, and the Pillow crop() method is used to create the new, smaller image, which then overwrites the original file.
-        
-*   **Zoom & Pan:** The class includes basic functionality to zoom into an image and pan around, which is essential for close inspection of scan quality.
+*   **Today's Books Panel:** A scrollable list showing all books processed during the current session. It distinguishes between books waiting in the staging area and books that have already been successfully transferred to the final data destination.
     
-
-### Class: ScanWorker
-
-A dedicated background thread to handle potentially slow calculations.
-
-*   **Decoupling:** Its primary purpose is to decouple statistics calculation from the main UI thread. It receives commands via a queue (scan\_worker\_command\_queue) and puts results back on another queue (scan\_worker\_result\_queue).
+*   **Transfer to Data Button:** The master button to initiate the automated archival process for all staged books.
     
-*   **Log File Reading:** The logic for reading the books\_complete\_log.json and summing the pages for the current day resides here. This ensures that even a very large log file will not cause the UI to stutter.
+*   **Settings:** A gear icon provides access to the settings modal, where folder paths and city code mappings are configured.
     
 
-### Class: SettingsFrame
+4\. Technical Implementation
+----------------------------
 
-The initial configuration screen.
+### Core Technologies
 
-*   **Configuration Persistence:** It saves all user-defined paths and settings into a simple scan\_viewer\_config.json file. This makes the application portable and easy to set up on different workstations.
+*   **Language/Framework:** Python 3 with the built-in **Tkinter** library for the graphical user interface.
     
-*   **City Code Management:** Provides a simple UI for adding, viewing, and removing city code-to-path mappings, which are the core of the automated archival feature.
+*   **Image Processing:** The **Pillow (PIL)** library is the workhorse for all image manipulation, including opening, verifying, cropping, rotating, color adjustments, and saving files.
     
-*   **Log File Management:** Includes a "Clear Log File" button. This was added to allow for a clean start or to clear out test data. The action requires user confirmation to prevent accidental data loss.
+*   **Advanced Image Analysis:** **scikit-image** and **NumPy** are used for more complex operations like automatic color correction (white point balancing) and lighting adjustments (histogram matching).
+    
+*   **File System Monitoring:** The **watchdog** library provides an efficient, event-based mechanism to monitor the scan folder for new files, eliminating the need for performance-intensive polling.
     
 
-### File Watcher (NewImageHandler & watchdog)
+### Key Classes & Architecture
 
-*   **Event-Driven Approach:** The watchdog library is used to monitor the scan folder. This is far more efficient than constantly polling the directory for changes. When watchdog detects a file creation event, it triggers the add\_new\_image method in the main app, which adds the file to the queue and updates the display.
+The application is built with an object-oriented structure to separate concerns.
+
+*   App(tk.Tk): The root of the application. It manages the main window, theme loading, and switching between the initial SettingsFrame and the main ImageScannerApp.
+    
+*   ImageScannerApp(tk.Frame): The primary application class that orchestrates the main UI, file watcher, background threads, and all workflow logic (book creation, data transfer, etc.).
+    
+*   ZoomPanCanvas(tk.Canvas): A custom Tkinter Canvas widget that is the heart of the user experience. It handles loading, displaying, and rendering images, as well as managing all interactive editing UI, such as drawing the crop box, handles, and split line.
+    
+*   SettingsModal(tk.Toplevel): The modal window for configuring all application settings, including folder paths and the crucial city-code-to-path mappings.
+    
+*   ScanWorker(threading.Thread): A dedicated background thread to handle statistics calculations. By offloading these potentially slow directory-scanning and log-file-reading tasks, the main UI thread remains responsive at all times.
+    
+*   NewImageHandler(FileSystemEventHandler): A handler class used by the watchdog observer to react specifically to file creation events in the scan folder.
+    
+
+### Concurrency and Performance
+
+To ensure a smooth user experience, especially when dealing with file operations over a network, the application uses a multi-threaded approach.
+
+*   **File Operations Thread:** All potentially blocking I/O operations (moving files, saving edits, deleting images) are executed in a temporary background thread. This prevents the UI from freezing while files are being copied or written to disk.
+    
+*   **Thread-Safe Communication:** Communication between the main UI thread and background worker threads is handled safely using Python's queue module. This ensures that data is passed between threads without causing race conditions or instability.
+    
+
+### Configuration and Logging
+
+*   scan\_viewer\_config.json: A simple JSON file that stores all persistent settings, such as folder paths, theme choice, and city code mappings. This makes the application portable and easy to back up.
+    
+*   books\_complete\_log.json: Records a timestamped entry for every book successfully transferred to the final data archive, including its name, page count, and destination path. This provides a persistent record of the day's work.
