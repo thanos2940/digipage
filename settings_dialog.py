@@ -1,6 +1,6 @@
 import os
 import sys
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtWidgets import (
     QApplication, QDialog, QTabWidget, QWidget, QVBoxLayout, QGridLayout,
     QGroupBox, QLabel, QLineEdit, QPushButton, QFileDialog, QListWidget,
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 import config
+from workers import ScanWorker
 
 class SettingsDialog(QDialog):
     # Signal to notify the main app that settings were saved and it might be time to open the main window
@@ -115,6 +116,7 @@ class SettingsDialog(QDialog):
         ref_layout.addWidget(self.create_browse_button(self.ref_folder_edit), 0, 1)
 
         calc_button = QPushButton("Calculate and Save Standard")
+        calc_button.setObjectName("calculateStandardButton") # Set object name for reliable finding
         calc_button.clicked.connect(self.calculate_standard)
         ref_layout.addWidget(calc_button, 1, 0, 1, 2)
 
@@ -219,12 +221,60 @@ class SettingsDialog(QDialog):
         self.city_path_edit.clear()
 
     def calculate_standard(self):
-        # This will eventually trigger a worker thread. For now, it's a placeholder.
         ref_folder = self.ref_folder_edit.text()
         if not ref_folder or not os.path.isdir(ref_folder):
             QMessageBox.warning(self, "Missing Folder", "Please select a valid reference images folder first.")
             return
-        QMessageBox.information(self, "Not Implemented", f"Calculation for images in '{ref_folder}' will be implemented later.")
+
+        # --- Setup and run worker thread ---
+        self.calc_thread = QThread()
+        self.calc_worker = ScanWorker()
+        self.calc_worker.moveToThread(self.calc_thread)
+
+        # Connect signals
+        self.calc_worker.standard_calculated.connect(self.on_standard_calculated)
+        self.calc_worker.error.connect(self.on_calculation_error)
+        self.calc_thread.started.connect(lambda: self.calc_worker.calculate_lighting_standard(ref_folder))
+        self.calc_thread.finished.connect(self.calc_thread.deleteLater)
+
+        # Start the thread
+        self.calc_thread.start()
+
+        # Disable button to prevent multiple clicks
+        calc_button = self.sender()
+        if calc_button:
+            calc_button.setEnabled(False)
+            calc_button.setText("Calculating...")
+
+    def on_standard_calculated(self, metrics: dict):
+        """Receives the calculated metrics and saves them to the config."""
+        self.config_data['reference_template_path'] = metrics.get('histogram_template_path')
+        self.config_data['lighting_standard_metrics'] = {
+            'brightness': metrics.get('brightness'),
+            'contrast': metrics.get('contrast')
+        }
+
+        # We can save this part of the config immediately.
+        config.save_config(self.config_data)
+
+        QMessageBox.information(self, "Success", f"Lighting standard calculated and saved.\nBrightness: {metrics['brightness']:.2f}\nContrast: {metrics['contrast']:.2f}")
+        self.cleanup_calc_worker()
+
+    def on_calculation_error(self, error_message: str):
+        QMessageBox.critical(self, "Calculation Error", error_message)
+        self.cleanup_calc_worker()
+
+    def cleanup_calc_worker(self):
+        """Cleans up the worker thread and re-enables the button."""
+        if hasattr(self, 'calc_thread') and self.calc_thread.isRunning():
+            self.calc_thread.quit()
+            self.calc_thread.wait()
+
+        # Find the button to re-enable it using its object name
+        calc_button = self.findChild(QPushButton, "calculateStandardButton")
+        if calc_button:
+             calc_button.setEnabled(True)
+             calc_button.setText("Calculate and Save Standard")
 
     def apply_theme(self, theme_name):
         self.config_data["current_theme"] = theme_name
