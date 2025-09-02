@@ -5,6 +5,8 @@ import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, font, ttk
 from PIL import Image, ImageTk, ImageOps, ImageEnhance
+from skimage.exposure import match_histograms
+from skimage.color import rgb2lab, lab2rgb
 import colorsys
 import json
 import math
@@ -15,6 +17,7 @@ import queue
 import re # Import re for natural sorting
 from datetime import datetime # Import datetime for date handling
 from collections import deque # Import deque for live performance tracking
+import numpy as np
 
 # This code only runs when the app is bundled into an .exe
 if getattr(sys, 'frozen', False):
@@ -287,9 +290,17 @@ class ZoomPanCanvas(tk.Canvas):
     def redraw_image(self, temp_image=None, quality=Image.Resampling.LANCZOS, alpha=255):
         # Apply current color adjustments if not a temporary image (e.g., rotation preview)
         if temp_image is None:
-            image_to_draw = self._apply_color_filters(self.original_image.copy(), self.brightness, self.contrast)
+            image_to_draw = self.original_image.copy()
+            # Apply color tint correction before brightness and contrast
+            if self.app_ref.auto_color_correction_enabled:
+                image_to_draw = self.auto_color_correct(image_to_draw)
+            image_to_draw = self._apply_color_filters(image_to_draw, self.brightness, self.contrast)
         else:
-            image_to_draw = self._apply_color_filters(temp_image.copy(), self.brightness, self.contrast)
+            image_to_draw = temp_image.copy()
+            # Apply color tint correction for temporary images too, if the feature is enabled
+            if self.app_ref.auto_color_correction_enabled:
+                image_to_draw = self.auto_color_correct(image_to_draw)
+            image_to_draw = self._apply_color_filters(image_to_draw, self.brightness, self.contrast)
 
         if not image_to_draw:
             if self.canvas_image_id: self.delete(self.canvas_image_id)
@@ -749,6 +760,101 @@ class ZoomPanCanvas(tk.Canvas):
         self.app_ref.set_editing_state(self.is_edited) # Update global editing state
         self.app_ref.show_snackbar("Οι ρυθμίσεις χρώματος αποθηκεύτηκαν.", 'info')
 
+   # Calculates average lightness and standard deviation from an image.
+    def calculate_image_metrics(self, image_path):
+        if not os.path.exists(image_path):
+            return None, None
+        try:
+            with Image.open(image_path) as img:
+                # Convert to grayscale for consistent metric calculation
+                gray_img = img.convert('L')
+                img_array = np.array(gray_img)
+
+                # Calculate mean (brightness) and standard deviation (contrast)
+                mean_brightness = np.mean(img_array)
+                std_dev_contrast = np.std(img_array)
+
+                return mean_brightness, std_dev_contrast
+        except Exception as e:
+            print(f"Error calculating metrics for {os.path.basename(image_path)}: {e}")
+            return None, None
+
+    # Calculates the average RGB values of an image.
+    def calculate_average_rgb(self, image):
+        img_rgb = image.convert('RGB')
+        img_array = np.array(img_rgb)
+        avg_rgb = np.mean(img_array, axis=(0, 1))
+        return avg_rgb
+
+    # Corrects the color cast of an image based on the lighting standard's RGB.
+    def auto_color_correct(self, image, percentile=99.5):
+        """
+        Corrects the color cast of an image using the White Point method.
+        Assumes the brightest pixels should be white.
+        """
+        img_rgb = image.convert('RGB')
+        img_array = np.array(img_rgb, dtype=np.float32)
+        
+        # Find the white point reference values by looking at the brightest pixels
+        r_white = np.percentile(img_array[:, :, 0], percentile)
+        g_white = np.percentile(img_array[:, :, 1], percentile)
+        b_white = np.percentile(img_array[:, :, 2], percentile)
+        
+        # Avoid division by zero if a color channel is completely black
+        if r_white == 0: r_white = 255
+        if g_white == 0: g_white = 255
+        if b_white == 0: b_white = 255
+
+        # Calculate how much to scale each color channel to make the white point pure white
+        r_scale = 255.0 / r_white
+        g_scale = 255.0 / g_white
+        b_scale = 255.0 / b_white
+        
+        # Apply the scaling to every pixel
+        img_array[:, :, 0] *= r_scale
+        img_array[:, :, 1] *= g_scale
+        img_array[:, :, 2] *= b_scale
+        
+        # Clip values to the valid 0-255 range and convert back to an image
+        corrected_array = np.clip(img_array, 0, 255).astype('uint8')
+        corrected_image = Image.fromarray(corrected_array, 'RGB')
+        
+        return corrected_image
+    
+    # Automatically adjusts image brightness and contrast based on a target standard.
+    def auto_fix_lighting(self):
+        if not self.true_original_image or not self.app_ref.lighting_standard:
+            self.app_ref.show_snackbar("Δεν έχει οριστεί πρότυπο φωτισμού.", 'warning')
+            return
+
+        # Get the standard metrics from the app's state
+        standard_brightness = self.app_ref.lighting_standard.get('brightness')
+        standard_contrast = self.app_ref.lighting_standard.get('contrast')
+
+        # Get metrics for the current image
+        current_brightness, current_contrast = self.calculate_image_metrics(self.image_path)
+        if current_brightness is None or current_contrast is None:
+            self.app_ref.show_snackbar("Αποτυχία υπολογισμού στατιστικών για την τρέχουσα εικόνα.", 'error')
+            return
+
+        # Calculate new brightness and contrast values
+        # Brightness is a factor of change, but contrast is a multiplicative factor.
+        # We need to map the desired change to the sliders' range.
+        new_brightness = self.brightness + (standard_brightness - current_brightness) / 255.0 * 2.0
+        new_contrast = self.contrast * (standard_contrast / current_contrast)
+
+        # Clamp values to the slider ranges
+        new_brightness = max(-1.0, min(new_brightness, 1.0))
+        new_contrast = max(0.0, min(new_contrast, 2.0))
+        
+        # Apply the new values to the sliders and redraw the image
+        self.brightness_slider.set(new_brightness)
+        self.contrast_slider.set(new_contrast)
+
+        self.set_brightness(new_brightness)
+        self.set_contrast(new_contrast)
+
+        self.app_ref.show_snackbar("Εφαρμόστηκε αυτόματη διόρθωση φωτισμού.", 'info')
 
     # Enters splitting mode, drawing a vertical line
     def enter_splitting_mode(self):
@@ -986,12 +1092,15 @@ class SettingsModal(tk.Toplevel):
         self.app_ref = app_ref # reference to ImageScannerApp instance
 
         # Variables for settings
-        self.paths = {"scan": tk.StringVar(), "today": tk.StringVar()}
+        self.paths = {"scan": tk.StringVar(), "today": tk.StringVar(), "lighting_standard": tk.StringVar()}
         self.image_load_timeout_var = tk.StringVar(value=str(DEFAULT_IMAGE_LOAD_TIMEOUT_MS))
         self.city_paths = {}
         self.city_code_entry_var = tk.StringVar()
         self.city_path_entry_var = tk.StringVar()
         self.city_listbox = None
+        self.lighting_standard_path_entry = None
+        self.calculate_standard_btn = None
+        self.standard_info_label = None
 
         # Center the modal
         self.update_idletasks()
@@ -1010,6 +1119,136 @@ class SettingsModal(tk.Toplevel):
         self.setup_ui()
         self.load_settings() # Load settings after UI is created
 
+    def setup_lighting_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        parent.grid_columnconfigure(2, weight=1)
+
+        self.lighting_title_label = tk.Label(parent, text="Ρύθμιση Προτύπου Φωτισμού", bg=Style.BG_COLOR, fg=Style.FG_COLOR, font=Style.get_font(14, "bold"))
+        self.lighting_title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20), sticky='w')
+
+        self.lighting_path_frame = tk.Frame(parent, bg=Style.BG_COLOR)
+        self.lighting_path_frame.grid(row=1, column=0, columnspan=3, sticky='ew')
+        tk.Label(self.lighting_path_frame, text="1. Φάκελος με τις εικόνες αναφοράς:", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10)).pack(side=tk.LEFT)
+
+        lighting_path_entry_frame = tk.Frame(self.lighting_path_frame, bg=Style.BG_COLOR)
+        lighting_path_entry_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10,0))
+
+        self.lighting_standard_path_entry = tk.Entry(lighting_path_entry_frame, textvariable=self.paths['lighting_standard'], state='readonly', width=50, readonlybackground=Style.BTN_BG, fg=Style.FG_COLOR, relief=tk.FLAT)
+        self.lighting_standard_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0,10))
+        browse_btn = self.app_ref.create_styled_button(lighting_path_entry_frame, "Αναζήτηση...", lambda: self.ask_dir('lighting_standard'), pady=4, padx=8, font_size=9)
+        browse_btn.pack(side=tk.LEFT)
+
+        self.calculate_standard_btn = self.app_ref.create_styled_button(parent, "2. Υπολογισμός Προτύπου", self.calculate_lighting_standard, bg=Style.SUCCESS_COLOR)
+        self.calculate_standard_btn.grid(row=2, column=0, columnspan=3, pady=(20, 10), sticky='w')
+
+        self.standard_info_label = tk.Label(parent, text="", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(10), justify=tk.LEFT)
+        self.standard_info_label.grid(row=3, column=0, columnspan=3, sticky='w')
+
+        # --- Auto-Apply Toggles ---
+        self.auto_options_frame = tk.LabelFrame(parent, text="Αυτόματη Εφαρμογή κατά τη Σάρωση", bg=Style.BG_COLOR, fg=Style.TEXT_SECONDARY_COLOR, font=Style.get_font(11, 'bold'), bd=1, relief=tk.GROOVE, padx=10, pady=10)
+        self.auto_options_frame.grid(row=4, column=0, columnspan=3, pady=(20, 0), sticky='ew')
+        
+        self.auto_lighting_toggle = tk.BooleanVar(value=self.app_ref.auto_lighting_correction_enabled)
+        self.auto_color_toggle = tk.BooleanVar(value=self.app_ref.auto_color_correction_enabled)
+        self.auto_sharpen_toggle = tk.BooleanVar(value=self.app_ref.auto_sharpening_enabled) # New sharpen toggle var
+
+        tk.Checkbutton(self.auto_options_frame, text="Αυτόματη Διόρθωση Φωτισμού & Αντίθεσης (Histogram Matching)", variable=self.auto_lighting_toggle, bg=Style.BG_COLOR, fg=Style.FG_COLOR, selectcolor=Style.BTN_BG, activebackground=Style.BG_COLOR, activeforeground=Style.FG_COLOR, font=Style.get_font(10)).pack(anchor='w', pady=(5, 0))
+        tk.Checkbutton(self.auto_options_frame, text="Αυτόματη Διόρθωση Χρώματος (White Point)", variable=self.auto_color_toggle, bg=Style.BG_COLOR, fg=Style.FG_COLOR, selectcolor=Style.BTN_BG, activebackground=Style.BG_COLOR, activeforeground=Style.FG_COLOR, font=Style.get_font(10)).pack(anchor='w')
+        tk.Checkbutton(self.auto_options_frame, text="Αυτόματη Όξυνση Εικόνας (Sharpen)", variable=self.auto_sharpen_toggle, bg=Style.BG_COLOR, fg=Style.FG_COLOR, selectcolor=Style.BTN_BG, activebackground=Style.BG_COLOR, activeforeground=Style.FG_COLOR, font=Style.get_font(10)).pack(anchor='w') # New sharpen checkbox
+    
+    def calculate_lighting_standard(self):
+        folder_path = self.paths['lighting_standard'].get()
+        if not os.path.isdir(folder_path):
+            messagebox.showerror("Σφάλμα", "Η καθορισμένη διαδρομή δεν είναι έγκυρος φάκελος.", parent=self)
+            return
+
+        image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+        if not image_files:
+            messagebox.showwarning("Προσοχή", "Ο φάκελος δεν περιέχει υποστηριζόμενες εικόνες.", parent=self)
+            return
+
+        # --- Create and save a reference histogram template ---
+        template_path = None
+        try:
+            # Open all images with Pillow
+            pil_images = [Image.open(p).convert('RGB') for p in image_files]
+            if not pil_images:
+                messagebox.showwarning("Προσοχή", "Δεν βρέθηκαν έγκυρες εικόνες.", parent=self)
+                return
+
+            # Use the size of the first image as the target for all others
+            target_size = pil_images[0].size
+            resized_images_np = []
+
+            # Resize all images to the target size and convert to numpy arrays
+            for img in pil_images:
+                if img.size != target_size:
+                    # Use a high-quality resampling filter
+                    resized_img = img.resize(target_size, Image.Resampling.LANCZOS)
+                    resized_images_np.append(np.array(resized_img))
+                else:
+                    resized_images_np.append(np.array(img))
+
+            # Average the numpy arrays to create the master template
+            avg_image_array = np.mean(np.array(resized_images_np), axis=0).astype(np.uint8)
+            template_image = Image.fromarray(avg_image_array, 'RGB')
+
+            # Save the template image next to the config file
+            template_path = os.path.splitext(CONFIG_FILE)[0] + "_template.png"
+            template_image.save(template_path)
+        except Exception as e:
+            messagebox.showerror("Σφάλμα Προτύπου", f"Δεν ήταν δυνατή η δημιουργία εικόνας προτύπου:\n{e}", parent=self)
+            return # Stop if template creation fails
+
+        # Calculate metrics for UI display purposes
+        total_brightness, total_contrast, valid_count = 0, 0, 0
+        for img_path in image_files:
+            brightness, contrast = self.app_ref.image_canvases[0].calculate_image_metrics(img_path)
+            if brightness is not None and contrast is not None:
+                total_brightness += brightness
+                total_contrast += contrast
+                valid_count += 1
+        
+        if valid_count > 0:
+            avg_brightness = total_brightness / valid_count
+            avg_contrast = total_contrast / valid_count
+            
+            # Save the metrics and the path to the new template image
+            try:
+                if os.path.exists(CONFIG_FILE):
+                    with open(CONFIG_FILE, 'r') as f:
+                        settings = json.load(f)
+                else:
+                    settings = {}
+                
+                settings['lighting_standard_metrics'] = {
+                    'brightness': avg_brightness,
+                    'contrast': avg_contrast,
+                    'histogram_template_path': template_path # Save path to the template
+                }
+                
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(settings, f, indent=4)
+                
+                self.app_ref.lighting_standard = settings['lighting_standard_metrics']
+                self._update_standard_info(settings['lighting_standard_metrics'])
+                messagebox.showinfo("Επιτυχία", f"Υπολογίστηκε το πρότυπο φωτισμού από {valid_count} εικόνες.", parent=self)
+
+            except IOError as e:
+                messagebox.showerror("Σφάλμα Αποθήκευσης", f"Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων:\n{e}", parent=self)
+
+        else:
+            messagebox.showwarning("Προσοχή", "Αποτυχία υπολογισμού προτύπου. Βεβαιωθείτε ότι οι εικόνες είναι έγκυρες.", parent=self)
+
+    # Helper function to update the info label
+    def _update_standard_info(self, metrics):
+        if metrics:
+            text = f"Τρέχον Πρότυπο:\nΜέση Φωτεινότητα: {metrics['brightness']:.2f}\nΜέση Αντίθεση: {metrics['contrast']:.2f}"
+        else:
+            text = "Δεν έχει οριστεί πρότυπο φωτισμού."
+        self.standard_info_label.config(text=text)
+
     def setup_ui(self):
         # Style for Notebook
         self.style = ttk.Style(self)
@@ -1027,11 +1266,14 @@ class SettingsModal(tk.Toplevel):
 
         self.paths_tab = tk.Frame(self.notebook, bg=Style.BG_COLOR, padx=10, pady=10)
         self.theme_tab = tk.Frame(self.notebook, bg=Style.BG_COLOR, padx=10, pady=10)
+        self.lighting_tab = tk.Frame(self.notebook, bg=Style.BG_COLOR, padx=10, pady=10) # New tab
 
         self.notebook.add(self.paths_tab, text="  Διαδρομές & Ροή  ")
+        self.notebook.add(self.lighting_tab, text="  Φωτισμός  ") # Add new tab
         self.notebook.add(self.theme_tab, text="  Θέμα  ")
 
         self.setup_paths_tab(self.paths_tab)
+        self.setup_lighting_tab(self.lighting_tab) # Setup new tab
         self.setup_theme_tab(self.theme_tab)
 
         # Add Save/Cancel buttons at the bottom
@@ -1206,7 +1448,13 @@ class SettingsModal(tk.Toplevel):
                 self.image_load_timeout_var.set(str(settings.get("image_load_timeout_ms", DEFAULT_IMAGE_LOAD_TIMEOUT_MS)))
                 self.city_paths = settings.get("city_paths", {})
                 if self.city_listbox: self._update_city_listbox()
-        except (IOError, json.JSONDecodeError) as e: print(f"ERROR: Could not load config for modal: {e}")
+                self._update_standard_info(settings.get("lighting_standard_metrics", None))
+
+                # New: Load the toggle states
+                self.auto_lighting_toggle.set(settings.get("auto_lighting_correction_enabled", False))
+                self.auto_color_toggle.set(settings.get("auto_color_correction_enabled", False))
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"ERROR: Could not load config for modal: {e}")
 
     def save_settings(self):
         try:
@@ -1235,26 +1483,56 @@ class SettingsModal(tk.Toplevel):
             return False
 
     def save_and_close(self):
-        if self.save_settings():
-            self.app_ref.show_snackbar("Οι ρυθμίσεις διαδρομής αποθηκεύτηκαν. Εφαρμογή...", 'info')
+        # First, save settings to the config file
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
+            else: settings = {}
+        except (IOError, json.JSONDecodeError): settings = {}
+        
+        path_settings = {key: var.get() for key, var in self.paths.items()}
+        settings.update(path_settings)
+        try:
+            timeout_val = int(self.image_load_timeout_var.get())
+            settings["image_load_timeout_ms"] = max(100, timeout_val)
+        except ValueError:
+            settings["image_load_timeout_ms"] = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
+        settings["city_paths"] = self.city_paths
+        # Save the toggle states
+        settings["auto_lighting_correction_enabled"] = self.auto_lighting_toggle.get()
+        settings["auto_color_correction_enabled"] = self.auto_color_toggle.get()
+        settings["auto_sharpening_enabled"] = self.auto_sharpen_toggle.get() # Save sharpen state
 
-            self.app_ref.scan_directory = self.paths["scan"].get()
-            self.app_ref.todays_books_folder = self.paths["today"].get()
-            self.app_ref.city_paths = self.city_paths
-            try:
-                self.app_ref.image_load_timeout_ms = int(self.image_load_timeout_var.get())
-            except ValueError:
-                self.app_ref.image_load_timeout_ms = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
+        try:
+            with open(CONFIG_FILE, 'w') as f: json.dump(settings, f, indent=4)
+        except IOError as e:
+            messagebox.showerror("Σφάλμα Αποθήκευσης", f"Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων:\n{e}", parent=self)
+            return
 
-            self.app_ref.scan_worker.scan_directory = self.app_ref.scan_directory
-            self.app_ref.scan_worker.todays_books_folder = self.app_ref.todays_books_folder
-            self.app_ref.scan_worker.city_paths = self.app_ref.city_paths
+        # Now, apply the settings to the running application instance
+        self.app_ref.show_snackbar("Οι ρυθμίσεις αποθηκεύτηκαν. Εφαρμογή...", 'info')
 
-            self.app_ref.start_watcher()
-            self.app_ref.refresh_scan_folder()
-            self.app_ref.update_stats()
+        self.app_ref.scan_directory = self.paths["scan"].get()
+        self.app_ref.todays_books_folder = self.paths["today"].get()
+        self.app_ref.city_paths = self.city_paths
+        self.app_ref.image_load_timeout_ms = settings["image_load_timeout_ms"]
+        
+        # Update the main app with the new toggle states
+        self.app_ref.auto_lighting_correction_enabled = settings["auto_lighting_correction_enabled"]
+        self.app_ref.auto_color_correction_enabled = settings["auto_color_correction_enabled"]
+        self.app_ref.auto_sharpening_enabled = settings["auto_sharpening_enabled"]
+        
+        self.app_ref.scan_worker.scan_directory = self.app_ref.scan_directory
+        self.app_ref.scan_worker.todays_books_folder = self.app_ref.todays_books_folder
+        self.app_ref.scan_worker.city_paths = self.app_ref.city_paths
+        self.app_ref.lighting_standard_path = self.paths['lighting_standard'].get()
+        self.app_ref.load_lighting_standard() # Reload the standard from config
 
-            self.destroy()
+        self.app_ref.start_watcher()
+        self.app_ref.refresh_scan_folder()
+        self.app_ref.update_stats()
+
+        self.destroy()
 
     def ask_dir(self, name):
         path = filedialog.askdirectory(title=f"Επιλέξτε Φάκελο {name.replace('_', ' ').title()}")
@@ -1322,11 +1600,9 @@ class ImageScannerApp(tk.Frame):
         self.is_animating = False
         self.image_cache, self.cache_lock = {}, threading.Lock()
 
-        # New state management for modes (crop, split, normal)
         self.current_mode = None # Can be 'crop', 'split', or None
-        self.active_canvas = None # The canvas currently being cropped or split
+        self.active_canvas = None 
 
-        # Queues for background workers
         self.preload_queue, self.preload_thread = queue.Queue(), threading.Thread(target=self._preload_worker, daemon=True)
         self.preload_thread.start()
 
@@ -1338,18 +1614,26 @@ class ImageScannerApp(tk.Frame):
         self.observer = None
         self.is_transfer_active, self.transfer_thread, self.transfer_status_queue = False, None, queue.Queue()
 
-        # Variables for jump button breathing animation
+        # Lighting Standard and auto-correction flags
+        self.lighting_standard = None
+        self.lighting_standard_path = ""
+        # Load settings for auto-correction from the config file at startup
+        try:
+            with open(CONFIG_FILE, 'r') as f: config_data = json.load(f)
+        except (IOError, json.JSONDecodeError): config_data = {}
+        self.auto_color_correction_enabled = config_data.get("auto_color_correction_enabled", False)
+        self.auto_lighting_correction_enabled = config_data.get("auto_lighting_correction_enabled", False)
+        self.auto_sharpening_enabled = config_data.get("auto_sharpening_enabled", False) # New sharpening flag
+
         self.jump_button_breathing_id = None
         self.breathing_step = 0
-        self.breathing_total_steps = 25 # Steps for one half-cycle (e.g., from base to target color) - Made faster
-        self.breathing_direction = 1 # 1 for increasing lightness, -1 for decreasing
+        self.breathing_total_steps = 25 
+        self.breathing_direction = 1
         self.breathing_base_color_rgb = self._hex_to_rgb(Style.BTN_BG)
         self.breathing_target_color_rgb = self._hex_to_rgb(Style.JUMP_BTN_BREATHE_COLOR)
 
-        # For live performance tracking
         self.scan_timestamps = deque()
 
-        # Process queues periodically
         self.after(100, self._process_transfer_queue)
         self.after(100, self._process_scan_queue)
 
@@ -1367,8 +1651,70 @@ class ImageScannerApp(tk.Frame):
         self.setup_ui()
         self.setup_keybinds()
         self.start_watcher()
-        self.scan_worker_command_queue.put(('initial_scan', self.scan_directory)) # Trigger initial scan via worker
+        self.load_lighting_standard()
+        self.scan_worker_command_queue.put(('initial_scan', self.scan_directory))
         self.update_stats()
+
+    # Automatically processes and saves a single image
+    def auto_process_and_save(self, path):
+        if not path or not os.path.exists(path):
+            return
+
+        try:
+            with Image.open(path) as original_image:
+                # Always work with an RGB copy
+                image_to_save = original_image.copy().convert('RGB')
+
+                # --- 1. Stable Lighting & Contrast Correction ---
+                if self.auto_lighting_correction_enabled:
+                    # Use PIL's robust autocontrast function.
+                    # It automatically stretches the image's contrast to the fullest range
+                    # without blowing out the highlights. This is much more stable than histogram matching.
+                    image_to_save = ImageOps.autocontrast(image_to_save, cutoff=0.5)
+
+                # --- 2. Advanced Color Tint Correction ---
+                if self.auto_color_correction_enabled:
+                    # Use the robust white-point correction method
+                    image_to_save = self.image_canvases[0].auto_color_correct(image_to_save)
+
+                # --- 3. Optional Sharpening Step ---
+                if self.auto_sharpening_enabled:
+                    image_to_save = image_to_save.filter(
+                        ImageFilter.UnsharpMask(radius=1, percent=120, threshold=3)
+                    )
+                
+                # Save the fully processed image
+                self.create_backup(path)
+                image_to_save.save(path)
+                self.invalidate_cache_for_path(path)
+                
+                # --- FIX for UI Refresh ---
+                # Check if the processed image is currently visible
+                is_visible = any(canvas.image_path == path for canvas in self.image_canvases)
+                
+                if is_visible:
+                    # Schedule a display update on the main thread to reload the processed image
+                    self.after(100, lambda: self.update_display(animated=False))
+                
+        except Exception as e:
+            error_type = type(e).__name__
+            self.show_snackbar(f"Αποτυχία αυτόματης επεξεργασίας: {os.path.basename(path)}. Σφάλμα: {error_type}: {e}", 'error')
+
+    def load_lighting_standard(self):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    settings = json.load(f)
+                    self.lighting_standard = settings.get('lighting_standard_metrics', None)
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"Error loading lighting standard from config: {e}")
+            self.lighting_standard = None
+
+    def toggle_auto_color_correction(self):
+        self.auto_color_correction_enabled = not self.auto_color_correction_enabled
+        state = "Ενεργοποιήθηκε" if self.auto_color_correction_enabled else "Απενεργοποιήθηκε"
+        self.show_snackbar(f"Αυτόματη διόρθωση χρώματος {state}.", 'info')
+        self.update_display(animated=False) # Redraw the image with the new setting
 
     def open_settings_modal(self):
         if hasattr(self, 'settings_window') and self.settings_window and self.settings_window.winfo_exists():
@@ -1973,6 +2319,12 @@ class ImageScannerApp(tk.Frame):
             buttons['save_color'].pack(side=tk.LEFT, padx=(0,3))
             buttons['cancel_color'] = self.create_styled_button(color_adjust_frame, "Ακύρωση", lambda c=canvas: self.cancel_color_adjustments(c), bg=Style.DESTRUCTIVE_COLOR, font_size=8, padx=5, pady=2)
             buttons['cancel_color'].pack(side=tk.LEFT)
+            buttons['auto_fix'] = self.create_styled_button(color_adjust_frame, "Auto", lambda c=canvas: c.auto_fix_lighting(), font_size=8, padx=5, pady=2, bg=Style.JUMP_BTN_BREATHE_COLOR)
+            buttons['auto_fix'].pack(side=tk.LEFT)
+            
+            # New color correction buttons
+            buttons['auto_color_correct_btn'] = self.create_styled_button(color_adjust_frame, "Auto Color", lambda c=canvas: self.toggle_auto_color_correction(), font_size=8, padx=5, pady=2, bg=Style.SUCCESS_COLOR)
+            buttons['auto_color_correct_btn'].pack(side=tk.LEFT, padx=(5,0))
 
             buttons['color_adjust_frame'] = color_adjust_frame # Keep reference to the frame
 
@@ -2264,17 +2616,22 @@ class ImageScannerApp(tk.Frame):
         except Exception as e:
             self.show_snackbar(f"Αποτυχία επαναφοράς εικόνας: {e}", 'error')
 
-    # Adds a new image to the list
+    # Adds a new image to the list and automatically processes it if enabled
     def add_new_image(self, path):
         self.image_files = [f for f in self.image_files if os.path.exists(f)]
         if path not in self.image_files and os.path.splitext(path)[1].lower() in ALLOWED_EXTENSIONS:
             self.image_files.append(path)
             # Sort using the natural_sort_key
-            try: self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+            try:
+                self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
             except FileNotFoundError:
                 self.image_files = [f for f in self.image_files if os.path.exists(f)]
                 self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
-
+            
+            # --- New: Auto-process the new image if toggles are on ---
+            if self.auto_lighting_correction_enabled or self.auto_color_correction_enabled:
+                self.after(500, lambda p=path: self.auto_process_and_save(p))
+            
             # Log timestamp for live performance
             self.scan_timestamps.append(time.time())
 
@@ -2596,10 +2953,15 @@ class SettingsFrame(tk.Frame):
         self.image_load_timeout_var = tk.StringVar(value=str(DEFAULT_IMAGE_LOAD_TIMEOUT_MS))
 
         # New: City path settings
+        # New: City path settings
         self.city_paths = {}
         self.city_code_entry_var = tk.StringVar()
         self.city_path_entry_var = tk.StringVar()
         self.city_listbox = None
+        
+        # New: Auto-apply toggle variables
+        self.auto_lighting_toggle = tk.BooleanVar()
+        self.auto_color_toggle = tk.BooleanVar()
 
         self.setup_ui()
         self.load_settings()
@@ -2704,6 +3066,7 @@ class SettingsFrame(tk.Frame):
 
 
         self.start_btn = tk.Button(self.main_frame, text="Έναρξη Σάρωσης", command=self.on_ok, bg=Style.SUCCESS_COLOR, fg="#ffffff", font=Style.get_font(12, "bold"), relief=tk.FLAT, padx=20, pady=10, activebackground=lighten_color(Style.SUCCESS_COLOR), activeforeground="#ffffff")
+        
         self.start_btn.grid(row=5, column=0, columnspan=2, pady=(30,0)) # Adjusted row
         self.start_btn.bind("<Enter>", lambda e, b=self.start_btn, c=lighten_color(Style.SUCCESS_COLOR): b.config(bg=c))
         self.start_btn.bind("<Leave>", lambda e, b=self.start_btn, c=Style.SUCCESS_COLOR: b.config(bg=c))
@@ -2769,12 +3132,16 @@ class SettingsFrame(tk.Frame):
     def load_settings(self):
         try:
             if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r') as f: settings = json.load(f)
-                for key in self.paths: self.paths[key].set(settings.get(key, ""))
+                with open(CONFIG_FILE, 'r') as f:
+                    settings = json.load(f)
+                for key in self.paths:
+                    self.paths[key].set(settings.get(key, ""))
                 self.image_load_timeout_var.set(str(settings.get("image_load_timeout_ms", DEFAULT_IMAGE_LOAD_TIMEOUT_MS)))
                 self.city_paths = settings.get("city_paths", {})
-                if self.city_listbox: self._update_city_listbox()
-        except (IOError, json.JSONDecodeError) as e: print(f"ERROR: Could not load config: {e}")
+                if self.city_listbox:
+                    self._update_city_listbox()
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"ERROR: Could not load config: {e}")
 
     # Saves current settings
     def save_settings(self):
@@ -2793,11 +3160,19 @@ class SettingsFrame(tk.Frame):
         except ValueError:
             settings["image_load_timeout_ms"] = DEFAULT_IMAGE_LOAD_TIMEOUT_MS
 
-        settings["city_paths"] = self.city_paths # Save city paths
+        settings["city_paths"] = self.city_paths
+        
+        # New: Save the toggle states
+        settings["auto_lighting_correction_enabled"] = self.auto_lighting_toggle.get()
+        settings["auto_color_correction_enabled"] = self.auto_color_toggle.get()
 
         try:
             with open(CONFIG_FILE, 'w') as f: json.dump(settings, f, indent=4)
-        except IOError as e: print(f"ERROR: Could not save config: {e}")
+            return True
+        except IOError as e:
+            print(f"ERROR: Could not save config: {e}")
+            messagebox.showerror("Σφάλμα Αποθήκευσης", f"Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων:\n{e}", parent=self)
+            return False
 
     # Handles the "Start Scanning" button click
     def on_ok(self):
