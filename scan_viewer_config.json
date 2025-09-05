@@ -1,0 +1,18 @@
+{
+    "scan": "C:/Users/user/Desktop/scan",
+    "today": "C:/Users/user/Desktop/\u0392\u0399\u0392\u039b\u0399\u0391 \u0397\u039c\u0395\u03a1\u0391\u03a3",
+    "image_load_timeout_ms": 2000,
+    "city_paths": {
+        "297": "Z:/\u03a5\u03a6 \u0392\u0384 \u039a\u039f\u03a1\u0399\u039d\u0398\u039f\u03a5"
+    },
+    "auto_lighting_correction_enabled": false,
+    "auto_color_correction_enabled": false,
+    "lighting_standard_metrics": {
+        "brightness": 216.93651183373007,
+        "contrast": 30.220946141271583,
+        "histogram_template_path": "scan_viewer_config_template.png"
+    },
+    "lighting_standard": "C:/Users/user/Desktop/Thanos/lighting standard samples",
+    "auto_sharpening_enabled": false,
+    "theme": "Neutral Grey"
+}
