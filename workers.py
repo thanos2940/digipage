@@ -9,7 +9,7 @@ from collections import OrderedDict
 from PySide6.QtCore import QObject, Signal, Slot, QSize, Qt, QThread, QRect
 from PySide6.QtGui import QPixmap, QTransform, QImage
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, FileDeletedEvent, FileMovedEvent
 from PIL import Image, ImageOps, ImageFilter
 
 import config
@@ -103,24 +103,27 @@ class ScanWorker(QObject):
 
     @Slot(str)
     def delete_file(self, path):
-        try:
-            max_retries = 5
-            retry_delay = 0.1 # 100ms
-            for i in range(max_retries):
-                try:
-                    if os.path.exists(path):
-                        os.remove(path)
+        max_retries = 5
+        retry_delay = 0.1 # seconds
+        for i in range(max_retries):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
                     self.file_operation_complete.emit("delete", path)
                     return
-                except PermissionError:
-                    if i < max_retries - 1:
-                        time.sleep(retry_delay)
-                    else:
-                        raise
-            
-        except Exception as e:
-            self.error.emit(f"Error deleting file {os.path.basename(path)}: {e}")
-
+                else:
+                    # If file doesn't exist, it might have been part of a pair that was already deleted.
+                    # This is not an error condition.
+                    self.file_operation_complete.emit("delete", path)
+                    return
+            except PermissionError as e:
+                if i < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    self.error.emit(f"Error deleting file {os.path.basename(path)}: {e}")
+            except Exception as e:
+                self.error.emit(f"Error deleting file {os.path.basename(path)}: {e}")
+                return
 
     @Slot(str, list)
     def create_book(self, book_name, files_to_move):
@@ -299,27 +302,48 @@ class ScanWorker(QObject):
             self.file_operation_complete.emit("restore", path)
         except Exception as e:
             self.error.emit(f"Failed to restore image {os.path.basename(path)}: {e}")
-
+            
+    @Slot(str, str, str, str)
+    def replace_pair(self, old_path1, old_path2, new_path1, new_path2):
+        try:
+            # First, delete the old files to make way for the new ones.
+            if os.path.exists(old_path1):
+                os.remove(old_path1)
+            if os.path.exists(old_path2):
+                os.remove(old_path2)
+            
+            # Now, rename the new files to the old filenames.
+            os.rename(new_path1, old_path1)
+            os.rename(new_path2, old_path2)
+            
+            self.file_operation_complete.emit("replace_pair", "Pair replaced successfully.")
+        except Exception as e:
+            self.error.emit(f"Failed to replace pair: {e}")
 
 
 class NewImageHandler(FileSystemEventHandler):
-    def __init__(self, callback, folder_change_callback):
+    def __init__(self, callback, general_change_callback):
         super().__init__()
         self.callback = callback
-        self.folder_change_callback = folder_change_callback
+        self.general_change_callback = general_change_callback
 
-    def on_any_event(self, event):
-        if event.is_directory:
-            return
-            
-        file_ext = os.path.splitext(event.src_path)[1].lower()
-        if file_ext not in config.ALLOWED_EXTENSIONS:
-            return
+    def on_created(self, event):
+        if not event.is_directory:
+            time.sleep(0.1) 
+            file_ext = os.path.splitext(event.src_path)[1].lower()
+            if file_ext in config.ALLOWED_EXTENSIONS:
+                self.callback(event.src_path)
 
-        if event.event_type == 'created':
-            self.callback(event.src_path)
-        elif event.event_type in ['deleted', 'moved']:
-            self.folder_change_callback()
+    def on_deleted(self, event):
+        if not event.is_directory:
+            file_ext = os.path.splitext(event.src_path)[1].lower()
+            if file_ext in config.ALLOWED_EXTENSIONS:
+                self.general_change_callback()
+
+    def on_moved(self, event):
+        # A move is like a create and a delete, just signal a general change
+        if not event.is_directory:
+             self.general_change_callback()
 
 
 class Watcher(QObject):
@@ -334,7 +358,7 @@ class Watcher(QObject):
         self.observer = Observer()
         self.event_handler = NewImageHandler(
             callback=self.handle_new_image,
-            folder_change_callback=self.scan_folder_changed.emit
+            general_change_callback=self.handle_general_change
         )
         self.thread = QThread()
         self.moveToThread(self.thread)
@@ -343,6 +367,10 @@ class Watcher(QObject):
     @Slot(str)
     def handle_new_image(self, path):
         self.new_image_detected.emit(path)
+        
+    @Slot()
+    def handle_general_change(self):
+        self.scan_folder_changed.emit()
 
     @Slot()
     def run(self):
@@ -353,27 +381,18 @@ class Watcher(QObject):
 
         self.observer.schedule(self.event_handler, self.scan_directory, recursive=False)
         self.observer.start()
-        
-        while self.observer.is_alive():
-            try:
-                self.observer.join(0.5)
-            except (KeyboardInterrupt, Exception):
-                self.observer.stop()
-                break
-        self.observer.join()
-        self.finished.emit()
-
 
     @Slot()
     def stop(self):
         if self.observer.is_alive():
             self.observer.stop()
-        # No need to join here, the run loop will handle it.
+            self.observer.join()
+        self.finished.emit()
 
-CACHE_MAX_SIZE = 20
 
 class ImageProcessor(QObject):
     image_loaded = Signal(str, QPixmap)
+    image_rotated = Signal(str, QPixmap)
     processing_complete = Signal(str)
     error = Signal(str)
     
@@ -381,14 +400,14 @@ class ImageProcessor(QObject):
         super().__init__()
         self._pixmap_cache = OrderedDict()
         self._caching_enabled = True
+        self.CACHE_SIZE = 20 # Store last 20 images
 
     @Slot(bool)
     def set_caching_enabled(self, enabled):
         self._caching_enabled = enabled
         if not enabled:
-            self._pixmap_cache.clear()
-    
-    @Slot()
+            self.clear_cache()
+            
     def clear_cache(self):
         self._pixmap_cache.clear()
 
@@ -401,25 +420,25 @@ class ImageProcessor(QObject):
         if force_reload and path in self._pixmap_cache:
             del self._pixmap_cache[path]
 
-        if self._caching_enabled:
-            if path in self._pixmap_cache:
-                # Move to end to mark as most recently used
-                self._pixmap_cache.move_to_end(path)
-                self.image_loaded.emit(path, self._pixmap_cache[path])
-                return
-        
+        if self._caching_enabled and path in self._pixmap_cache:
+            # Move to end to signify it's recently used
+            self._pixmap_cache.move_to_end(path)
+            self.image_loaded.emit(path, self._pixmap_cache[path])
+            return
         try:
             q_image = QImage(path)
-            if q_image.isNull():
-                raise IOError(f"QImage could not load the file: {path}")
+            if q_image.isNull(): # Check if image data is valid
+                self.error.emit(f"Failed to decode image: {os.path.basename(path)}")
+                self.image_loaded.emit(path, QPixmap())
+                return
 
             pixmap = QPixmap.fromImage(q_image)
-
+            
             if self._caching_enabled:
                 self._pixmap_cache[path] = pixmap
-                if len(self._pixmap_cache) > CACHE_MAX_SIZE:
-                    self._pixmap_cache.popitem(last=False) # Remove the least recently used
-                
+                if len(self._pixmap_cache) > self.CACHE_SIZE:
+                    self._pixmap_cache.popitem(last=False) # Remove oldest item
+
             self.image_loaded.emit(path, pixmap)
         except Exception as e:
             self.error.emit(f"Failed to load image {path}: {e}")
@@ -447,8 +466,14 @@ class ImageProcessor(QObject):
             self.error.emit(f"Auto-processing failed for {os.path.basename(path)}: {e}")
 
     def _numpy_percentile_flat(self, arr_flat, q):
-        import numpy as np
-        return np.percentile(arr_flat, q)
+        arr_flat_sorted = sorted(arr_flat)
+        k = (len(arr_flat_sorted) - 1) * (q / 100.0)
+        f = int(k)
+        c = k - f
+        if f + 1 < len(arr_flat_sorted):
+            return arr_flat_sorted[f] * (1 - c) + arr_flat_sorted[f + 1] * c
+        else:
+            return arr_flat_sorted[f]
 
     def _correct_color_cast(self, image, percentile=99.5):
         img_rgb = image.convert('RGB')
@@ -480,22 +505,29 @@ class ImageProcessor(QObject):
         
     @Slot(str, int)
     def get_rotated_pixmap(self, path, angle):
-        pixmap_to_rotate = self._pixmap_cache.get(path)
-        if not pixmap_to_rotate: 
-            # This can happen if caching is off. We need to load it first.
+        if path in self._pixmap_cache:
+            original_pixmap = self._pixmap_cache[path]
+        else:
+            # This case should be rare if load is always called first,
+            # but as a fallback, load it now.
             temp_image = QImage(path)
-            if temp_image.isNull():
-                self.image_loaded.emit(path, QPixmap()) # Emit empty to handle error
-                return
-            pixmap_to_rotate = QPixmap.fromImage(temp_image)
+            if temp_image.isNull(): return
+            original_pixmap = QPixmap.fromImage(temp_image)
 
         transform = QTransform().rotate(angle)
-        rotated = pixmap_to_rotate.transformed(transform, Qt.SmoothTransformation)
+        rotated = original_pixmap.transformed(transform, Qt.SmoothTransformation)
         
         if self._caching_enabled:
-            self._pixmap_cache[path] = rotated 
+            # We don't want to store rotated versions in the main cache
+            # because the rotation is temporary until saved.
+            # But we still need to send the rotated pixmap back to the UI.
+            pass
         
-        self.image_loaded.emit(path, rotated) # Use image_loaded as it's a full replacement
+        # In this architecture, the main window will save the file if needed,
+        # which will then trigger a reload.
+        # So we just emit the result for display.
+        self.image_rotated.emit(path, rotated)
+
 
     def create_backup(self, path):
         if not os.path.exists(config.BACKUP_DIR): os.makedirs(config.BACKUP_DIR)

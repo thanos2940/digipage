@@ -58,7 +58,7 @@ class BookListItemWidget(QWidget):
         status_label.setAlignment(Qt.AlignCenter)
 
         # Style for the page count (more prominent)
-        pages_label.setStyleSheet(f"color: {theme['PRIMARY']}; font-weight: bold; font-size: 11pt; background-color: transparent;")
+        pages_label.setStyleSheet(f"font-weight: bold; color: {theme['PRIMARY']}; font-size: 11pt; background-color: transparent;")
         pages_label.setAlignment(Qt.AlignRight)
 
         layout.addWidget(name_label, 1) # Add stretch factor to push other elements to the right
@@ -74,6 +74,9 @@ class MainWindow(QMainWindow):
         self.image_files = []
         self.current_index = 0
         self.is_actively_editing = False # State to control auto-navigation
+        self.replace_mode_active = False
+        self.replace_candidates = []
+        self._force_reload_on_next_scan = False
         
         self._initial_load_done = False
         
@@ -299,6 +302,10 @@ class MainWindow(QMainWindow):
         self.delete_pair_btn.setMinimumHeight(40)
         self.delete_pair_btn.clicked.connect(self.delete_current_pair)
         
+        self.replace_pair_btn = QPushButton("🔁 Replace Pair")
+        self.replace_pair_btn.setMinimumHeight(40)
+        self.replace_pair_btn.clicked.connect(self.toggle_replace_mode)
+
         bottom_bar_layout.addWidget(self.status_label)
         bottom_bar_layout.addStretch()
         bottom_bar_layout.addWidget(self.prev_btn)
@@ -306,13 +313,15 @@ class MainWindow(QMainWindow):
         bottom_bar_layout.addWidget(self.jump_end_btn)
         bottom_bar_layout.addWidget(self.refresh_btn)
         bottom_bar_layout.addStretch()
+        bottom_bar_layout.addWidget(self.replace_pair_btn)
         bottom_bar_layout.addWidget(self.delete_pair_btn)
 
         main_layout.addWidget(bottom_bar)
 
     @Slot()
-    def trigger_full_refresh(self):
+    def trigger_full_refresh(self, force_reload_viewers=False):
         """A single slot to completely refresh the application state."""
+        self._force_reload_on_next_scan = force_reload_viewers
         if self.is_actively_editing:
             return
         self.scan_worker.perform_initial_scan()
@@ -403,12 +412,13 @@ class MainWindow(QMainWindow):
     def on_initial_scan_complete(self, files):
         self.image_files = files
         
-        if self.current_index >= len(self.image_files):
+        if self.current_index + 1 >= len(self.image_files) and len(self.image_files) > 0:
             self.current_index = max(0, len(self.image_files) - 2)
 
-        self.current_index = self.current_index - (self.current_index % 2)
-
-        self.update_display()
+        force_reload = getattr(self, '_force_reload_on_next_scan', False)
+        self.update_display(force_reload=force_reload)
+        self._force_reload_on_next_scan = False
+        
         self.stats_labels['pending'].setText(str(len(self.image_files)))
 
     @Slot(dict)
@@ -448,6 +458,14 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_new_image_detected(self, path):
+        if self.replace_mode_active:
+            self.replace_candidates.append(path)
+            if len(self.replace_candidates) >= 2:
+                self.execute_replace()
+            else:
+                self.status_label.setText("Waiting for 1 more scan to replace pair...")
+            return
+
         if path not in self.image_files:
             self.image_files.append(path)
             self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
@@ -467,12 +485,12 @@ class MainWindow(QMainWindow):
     def show_error(self, message):
         QMessageBox.critical(self, "Worker Error", message)
 
-    def update_display(self):
+    def update_display(self, force_reload=False):
         path1 = self.image_files[self.current_index] if self.current_index < len(self.image_files) else None
         path2 = self.image_files[self.current_index + 1] if (self.current_index + 1) < len(self.image_files) else None
 
-        self.viewer1['viewer'].request_image_load(path1)
-        self.viewer2['viewer'].request_image_load(path2)
+        self.viewer1['viewer'].request_image_load(path1, force_reload=force_reload)
+        self.viewer2['viewer'].request_image_load(path2, force_reload=force_reload)
 
         total = len(self.image_files)
         page1_num = self.current_index + 1 if path1 else 0
@@ -488,22 +506,23 @@ class MainWindow(QMainWindow):
 
 
     def next_pair(self):
-        if self.is_actively_editing: return
+        if self.is_actively_editing or self.replace_mode_active: return
         if self.current_index + 2 < len(self.image_files):
             self.current_index += 2
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def prev_pair(self):
-        if self.is_actively_editing: return
+        if self.is_actively_editing or self.replace_mode_active: return
         if self.current_index > 0:
             self.current_index -= 2
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def jump_to_end(self):
+        if self.replace_mode_active: return
         if not self.image_files: return
-        new_index = len(self.image_files) - 2 if len(self.image_files) > 1 else 0
+        new_index = len(self.image_files) - 2 if len(self.image_files) >= 2 else 0
         self.current_index = max(0, new_index)
         self.update_display()
         self.is_actively_editing = False # Jumping to end is a navigation action
@@ -538,6 +557,7 @@ class MainWindow(QMainWindow):
             self.trigger_full_refresh()
 
     def delete_single_image(self, viewer_panel):
+        if self.replace_mode_active: return
         image_path = viewer_panel['viewer'].image_path
         if not image_path: return
         reply = QMessageBox.question(self, "Confirm Deletion",
@@ -550,6 +570,7 @@ class MainWindow(QMainWindow):
             self.scan_worker.delete_file(image_path)
 
     def delete_current_pair(self):
+        if self.replace_mode_active: return
         path1 = self.viewer1['viewer'].image_path
         path2 = self.viewer2['viewer'].image_path
         paths_to_delete = [p for p in [path1, path2] if p]
@@ -636,28 +657,19 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def on_file_operation_complete(self, operation_type, message_or_path):
         """Handles the UI updates after a file operation from the worker is complete."""
+        self.is_actively_editing = False # Reset editing state after any operation
         
-        if operation_type in ["crop", "restore"]:
-            path = message_or_path
-            if self.viewer1['viewer'].image_path == path:
-                self.viewer1['viewer'].request_image_load(path, force_reload=True)
-            if self.viewer2['viewer'].image_path == path:
-                self.viewer2['viewer'].request_image_load(path, force_reload=True)
-            self.scan_worker.calculate_today_stats()
-
-        elif operation_type in ["split", "delete", "create_book"]:
-            self.trigger_full_refresh()
-
+        force_reload = operation_type in ["crop", "restore", "replace_pair"]
+        
+        if operation_type in ["crop", "restore", "split", "delete", "create_book", "replace_pair"]:
+            self.trigger_full_refresh(force_reload_viewers=force_reload)
+        
         elif operation_type == "transfer_all":
             self.transfer_progress_bar.setVisible(False)
             self.transfer_status_label.setVisible(False)
             self.scan_worker.calculate_today_stats()
-        
-        # After any file operation, we are no longer "actively editing" in the sense of
-        # auto-navigation being blocked. This allows the jump button to behave correctly.
-        self.is_actively_editing = False 
+            
         self._check_and_update_jump_button_animation()
-
 
     def apply_crop(self, viewer_panel):
         viewer = viewer_panel['viewer']
@@ -694,6 +706,45 @@ class MainWindow(QMainWindow):
                 self.scan_worker.split_image(viewer.image_path, split_x)
         self.toggle_split_mode(viewer_panel, False)
 
+    def toggle_replace_mode(self):
+        self.replace_mode_active = not self.replace_mode_active
+        
+        if self.replace_mode_active:
+            # Check if there's a valid pair to replace
+            path1 = self.viewer1['viewer'].image_path
+            path2 = self.viewer2['viewer'].image_path
+            if not path1 or not path2:
+                QMessageBox.warning(self, "Action Blocked", "A full pair must be on screen to use Replace mode.")
+                self.replace_mode_active = False
+                return
+
+            self.replace_pair_btn.setText("❌ Cancel Replace")
+            self.replace_pair_btn.setProperty("class", "destructive filled")
+            self.status_label.setText("Waiting for 2 new scans to replace pair...")
+            # Visual cue for which viewers are targeted
+            self.viewer1['frame'].setStyleSheet("border: 2px dashed #ffb4ab;")
+            self.viewer2['frame'].setStyleSheet("border: 2px dashed #ffb4ab;")
+            self.replace_candidates = []
+        else:
+            self.replace_pair_btn.setText("🔁 Replace Pair")
+            self.replace_pair_btn.setProperty("class", "")
+            self.viewer1['frame'].setStyleSheet("")
+            self.viewer2['frame'].setStyleSheet("")
+            self.update_display() # Restore original status text
+        
+        # Re-apply stylesheet to update button appearance
+        self.replace_pair_btn.style().unpolish(self.replace_pair_btn)
+        self.replace_pair_btn.style().polish(self.replace_pair_btn)
+
+    def execute_replace(self):
+        old_path1 = self.viewer1['viewer'].image_path
+        old_path2 = self.viewer2['viewer'].image_path
+        new_path1 = self.replace_candidates[0]
+        new_path2 = self.replace_candidates[1]
+
+        self.image_processor.clear_cache_for_paths([old_path1, old_path2])
+        self.scan_worker.replace_pair(old_path1, old_path2, new_path1, new_path2)
+        self.toggle_replace_mode() # Deactivate mode
 
     def closeEvent(self, event):
         """Gracefully shut down all background threads before closing."""
