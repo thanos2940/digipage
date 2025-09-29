@@ -1,70 +1,205 @@
 import sys
 import os
 import re
+import time
+from collections import deque
 from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QDockWidget, QScrollArea, QLineEdit, QGroupBox, QFormLayout,
     QFrame, QMessageBox, QDialog, QToolButton, QSpacerItem, QSizePolicy, QApplication,
-    QProgressDialog, QProgressBar
+    QProgressDialog, QProgressBar, QStackedWidget
 )
-from PySide6.QtCore import Qt, QThread, Slot, QSize, QTimer
+from PySide6.QtCore import Qt, QThread, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QIcon, QPixmap, QColor
 
 import config
-from image_viewer import ImageViewer
+from image_viewer import ImageViewer, InteractionMode
 from workers import ScanWorker, Watcher, ImageProcessor, natural_sort_key
 from settings_dialog import SettingsDialog
+from log_viewer_dialog import LogViewerDialog
+
 
 # A custom widget for displaying book information in a structured, table-like row.
 class BookListItemWidget(QWidget):
     def __init__(self, name, status, pages, theme, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(45)
+        self.setMinimumHeight(50)
+
+        # Main layout with a subtle bottom border for separation
+        self.setStyleSheet(f"""
+            QWidget {{
+                border-bottom: 1px solid {theme['OUTLINE']};
+            }}
+        """)
+        
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        layout.setSpacing(10)
-
-        # Style for the main row background to highlight transferred books
-        if status == "DATA":
-            self.setAutoFillBackground(True)
-            palette = self.palette()
-            highlight_color = config.lighten_color(theme['FRAME_BG'], 0.1)
-            palette.setColor(self.backgroundRole(), QColor(highlight_color))
-            self.setPalette(palette)
-            self.setStyleSheet("border-radius: 5px;")
-
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(15)
 
         name_label = QLabel(name)
         status_label = QLabel(status)
-        pages_label = QLabel(f"{pages} pgs")
+        pages_label = QLabel(f"{pages} σελ.")
 
-        # Style for the book name
-        name_label.setStyleSheet(f"color: {theme['ON_SURFACE']}; background-color: transparent;")
+        # --- Style Book Name ---
+        name_label.setStyleSheet(f"border: none; color: {theme['ON_SURFACE']}; background-color: transparent; font-weight: bold;")
 
-        # Style for the status pill (less prominent)
-        status_stylesheet = """
-            padding: 3px 8px;
-            border-radius: 9px;
+        # --- Style Status Pill ---
+        status_color = theme['SUCCESS'] if status == "DATA" else theme['WARNING']
+        # Convert hex to rgba for background with transparency
+        rgb_color = QColor(status_color).getRgb()
+        bg_color_rgba = f"rgba({rgb_color[0]}, {rgb_color[1]}, {rgb_color[2]}, 40)" # ~15% opacity
+
+        status_stylesheet = f"""
+            border: none;
+            color: {status_color};
+            background-color: {bg_color_rgba};
+            padding: 4px 10px;
+            border-radius: 11px;
             font-weight: bold;
-            font-size: 7pt;
-            background-color: transparent;
+            font-size: 8pt;
         """
-        if status == "DATA":
-            status_stylesheet += f"color: {theme['SUCCESS']};"
-        else: # TODAY'S
-            status_stylesheet += f"color: {theme['WARNING']};"
         status_label.setStyleSheet(status_stylesheet)
         status_label.setAlignment(Qt.AlignCenter)
 
-        # Style for the page count (more prominent)
-        pages_label.setStyleSheet(f"font-weight: bold; color: {theme['PRIMARY']}; font-size: 11pt; background-color: transparent;")
+        # --- Style Page Count ---
+        page_count_color = config.lighten_color(theme['PRIMARY'], 0.2)
+        pages_label.setStyleSheet(f"border: none; font-weight: bold; color: {page_count_color}; font-size: 11pt; background-color: transparent;")
         pages_label.setAlignment(Qt.AlignRight)
 
-        layout.addWidget(name_label, 1) # Add stretch factor to push other elements to the right
+        layout.addWidget(name_label, 1)
+        layout.addStretch(1)
         layout.addWidget(status_label)
         layout.addWidget(pages_label)
 
+
+# A custom widget for displaying a single statistic in a styled card.
+class StatsCardWidget(QWidget):
+    def __init__(self, title, initial_value, color, theme, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StatsCard")
+        # Make the card compact and prevent vertical stretching
+        self.setFixedHeight(85)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.setStyleSheet(f"""
+            #StatsCard {{
+                background-color: {theme['SURFACE_CONTAINER']};
+                border-radius: 12px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        # Symmetrical and reduced margins for a tighter look
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(2)
+
+        self.value_label = QLabel(initial_value)
+        self.value_label.setAlignment(Qt.AlignCenter)
+        self.value_label.setStyleSheet(f"""
+            font-size: 20pt;
+            font-weight: bold;
+            color: {color};
+            background-color: transparent;
+        """)
+
+        self.title_label = QLabel(title.upper())
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setWordWrap(True) # Ensure text wraps
+        self.title_label.setStyleSheet(f"""
+            font-size: 7pt;
+            font-weight: bold;
+            color: {theme['ON_SURFACE_VARIANT']};
+            background-color: transparent;
+        """)
+        
+        # Add stretches to vertically center the content
+        layout.addStretch()
+        layout.addWidget(self.value_label)
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+
+    def set_value(self, value_text):
+        self.value_label.setText(str(value_text))
+
+class HoverAwareToolbar(QFrame):
+    def __init__(self, viewer, parent=None):
+        super().__init__(parent)
+        self.viewer = viewer
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        if self.viewer:
+            self.viewer.cancel_toolbar_hide()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self.viewer:
+            self.viewer.leaveEvent(event)
+        super().leaveEvent(event)
+
+class ExpandingButton(QToolButton):
+    """A QToolButton that expands on hover to show full text and collapses to an icon."""
+    def __init__(self, icon_text, full_text, parent=None):
+        super().__init__(parent)
+        self._icon_text = icon_text
+        self._full_text = full_text
+        self.setToolTip(full_text)
+
+        # Temporarily set full text to calculate expanded width from sizeHint
+        self.setText(self._full_text)
+        self.expanded_width = self.sizeHint().width()
+
+        # Set icon text to calculate collapsed width
+        self.setText(self._icon_text)
+        self.collapsed_width = self.sizeHint().width()
+
+        # Set initial state
+        self.setMinimumWidth(self.collapsed_width)
+        
+        # Setup the animation for the width property
+        self.animation = QPropertyAnimation(self, b"minimumWidth")
+        self.animation.setDuration(150)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+    def enterEvent(self, event):
+        """When the mouse enters, expand the button to show the full text."""
+        self.setText(self._full_text)
+        self.animation.stop()
+        self.animation.setStartValue(self.width())
+        self.animation.setEndValue(self.expanded_width)
+        self.animation.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """When the mouse leaves, collapse the button back to the icon text."""
+        self.animation.stop()
+        self.animation.setStartValue(self.width())
+        self.animation.setEndValue(self.collapsed_width)
+        
+        # Disconnect any previous connection to be safe
+        try:
+            self.animation.finished.disconnect(self._on_collapse_finished)
+        except (TypeError, RuntimeError):
+            pass # Fails silently if not connected
+            
+        # Once the animation finishes, revert to the icon text
+        self.animation.finished.connect(self._on_collapse_finished)
+        self.animation.start()
+        super().leaveEvent(event)
+
+    @Slot()
+    def _on_collapse_finished(self):
+        """Slot to revert the button text after the collapse animation is done."""
+        # Check if the mouse is still outside the button before changing the text
+        if not self.underMouse():
+            self.setText(self._icon_text)
+        
+        # Disconnect self to prevent this slot from being called again
+        try:
+            self.animation.finished.disconnect(self._on_collapse_finished)
+        except (TypeError, RuntimeError):
+            pass
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -77,8 +212,14 @@ class MainWindow(QMainWindow):
         self.replace_mode_active = False
         self.replace_candidates = []
         self._force_reload_on_next_scan = False
+        self._split_op_index = None # Track index for post-split navigation
         
         self._initial_load_done = False
+        
+        # --- Performance Tracking ---
+        self.scan_timestamps = deque(maxlen=20) # For calculating rolling speed
+        self.staged_pages_count = 0
+        self.data_pages_count = 0
         
         self.update_timer = QTimer(self)
         self.update_timer.setSingleShot(True)
@@ -98,6 +239,10 @@ class MainWindow(QMainWindow):
         if not self._initial_load_done:
             QTimer.singleShot(100, self.initial_load)
             self._initial_load_done = True
+
+    def open_log_viewer_dialog(self):
+        dialog = LogViewerDialog(self)
+        dialog.exec()
 
     def initial_load(self):
         self.trigger_full_refresh()
@@ -142,7 +287,7 @@ class MainWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName("ViewerFrame")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(0,0,0,0)
         
         viewer = ImageViewer()
         viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -151,56 +296,124 @@ class MainWindow(QMainWindow):
         primary_color = theme_data.get("PRIMARY", "#b0c6ff")
         tertiary_color = theme_data.get("TERTIARY", "#e2bada")
         viewer.set_theme_colors(primary_color, tertiary_color)
-
-        # Main controls below the image
-        controls_panel = QWidget()
-        controls_layout = QHBoxLayout(controls_panel)
-        controls_layout.setContentsMargins(0, 8, 0, 0)
         
+        layout.addWidget(viewer, 1)
+
+        # --- Floating Toolbar (Multi-Pill) ---
+        toolbar_container = HoverAwareToolbar(viewer, frame)
+        toolbar_container.setObjectName("ToolbarContainer")
+        toolbar_container.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        container_layout = QHBoxLayout(toolbar_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(8) # Space between pills
+
+        # Pill 1: Editing Tools
+        tools_pill = QFrame(toolbar_container)
+        tools_pill.setObjectName("FloatingToolbar")
+        tools_layout = QHBoxLayout(tools_pill)
+        tools_layout.setContentsMargins(4, 2, 4, 2)
+        tools_layout.setSpacing(4)
+
+        # Pill 2: Destructive/Restorative Actions
+        actions_pill = QFrame(toolbar_container)
+        actions_pill.setObjectName("FloatingToolbar")
+        actions_layout = QHBoxLayout(actions_pill)
+        actions_layout.setContentsMargins(4, 2, 4, 2)
+        actions_layout.setSpacing(4)
+        
+        # Pill 3: Confirmation controls for split/rotate modes
+        confirmation_pill = QFrame(toolbar_container)
+        confirmation_pill.setObjectName("FloatingToolbar")
+        confirmation_layout = QHBoxLayout(confirmation_pill)
+        confirmation_layout.setContentsMargins(8, 0, 8, 0)
+        confirmation_layout.setSpacing(5)
+
+        container_layout.addWidget(confirmation_pill)
+        container_layout.addWidget(tools_pill)
+        container_layout.addWidget(actions_pill)
+
         controls = {}
-        # The order of buttons is changed for better workflow
-        controls['split'] = QPushButton("Split")
-        controls['crop'] = QPushButton("Apply Crop")
-        controls['restore'] = QPushButton("Restore")
-        controls['delete'] = QPushButton("Delete")
+        
+        # --- Create All Controls ---
+        # Mode Indicator
+        controls['mode_label'] = QLabel()
+        controls['mode_label'].setObjectName("ModeIndicatorLabel")
 
-        controls['crop'].setProperty("class", "success filled")
-        controls['delete'].setProperty("class", "destructive")
-        
-        # Initially hide the split mode buttons
-        controls['confirm_split'] = QPushButton("Confirm Split")
-        controls['confirm_split'].setProperty("class", "success filled")
-        controls['confirm_split'].setVisible(False)
-        controls['cancel_split'] = QPushButton("Cancel Split")
-        controls['cancel_split'].setProperty("class", "destructive")
-        controls['cancel_split'].setVisible(False)
-        
-        controls_layout.addStretch()
-        controls_layout.addWidget(controls['split'])
-        controls_layout.addWidget(controls['crop'])
-        controls_layout.addWidget(controls['restore'])
-        controls_layout.addWidget(controls['delete'])
-        controls_layout.addWidget(controls['confirm_split'])
-        controls_layout.addWidget(controls['cancel_split'])
-        controls_layout.addStretch()
-        
-        layout.addWidget(viewer)
-        layout.addWidget(controls_panel)
+        # Editing Tools (Pill 1)
+        controls['split'] = ExpandingButton("✂️", "Διαχωρισμός", tools_pill)
+        controls['rotate'] = ExpandingButton("🔄", "Περιστροφή", tools_pill)
+        controls['fix_color'] = ExpandingButton("🎨", "Διόρθωση", tools_pill)
+        controls['crop'] = ExpandingButton("✅", "Περικοπή", tools_pill)
+        controls['crop'].setObjectName("crop_button")
 
-        panel_widgets = {'frame': frame, 'viewer': viewer, **controls}
+        # Actions (Pill 2)
+        controls['restore'] = ExpandingButton("⏪", "Επαναφορά", actions_pill)
+        controls['delete'] = ExpandingButton("🗑️", "Διαγραφή", actions_pill)
+        controls['delete'].setObjectName("delete_button")
+        
+        # Confirmation Controls (Pill 3)
+        controls['confirm_split'] = QPushButton("Επιβεβαίωση"); controls['confirm_split'].setProperty("class", "success filled")
+        controls['cancel_split'] = QPushButton("Άκυρο"); controls['cancel_split'].setProperty("class", "destructive")
+        controls['cancel_rotate'] = QPushButton("Τέλος"); controls['cancel_rotate'].setProperty("class", "destructive")
+
+        # Add controls to their respective pills
+        tools_layout.addWidget(controls['split'])
+        tools_layout.addWidget(controls['rotate'])
+        tools_layout.addWidget(controls['fix_color'])
+        tools_layout.addWidget(controls['crop'])
+        
+        actions_layout.addWidget(controls['restore'])
+        actions_layout.addWidget(controls['delete'])
+        
+        confirmation_layout.addWidget(controls['mode_label'])
+        confirmation_layout.addWidget(controls['confirm_split'])
+        confirmation_layout.addWidget(controls['cancel_split'])
+        confirmation_layout.addWidget(controls['cancel_rotate'])
+
+        viewer.set_toolbar(toolbar_container)
+
+        panel_widgets = {
+            'frame': frame, 'viewer': viewer, 'toolbar_container': toolbar_container, 
+            'tools_pill': tools_pill, 'actions_pill': actions_pill, 'confirmation_pill': confirmation_pill, 
+            **controls
+        }
         
         # Connect signals
         controls['crop'].clicked.connect(lambda: self.apply_crop(panel_widgets))
+        controls['fix_color'].clicked.connect(lambda: self.apply_color_fix(panel_widgets))
         controls['split'].clicked.connect(lambda: self.toggle_split_mode(panel_widgets, True))
+        controls['rotate'].clicked.connect(lambda: self.toggle_rotate_mode(panel_widgets, True))
         controls['delete'].clicked.connect(lambda: self.delete_single_image(panel_widgets))
         controls['restore'].clicked.connect(lambda: self.restore_image(panel_widgets))
         controls['confirm_split'].clicked.connect(lambda: self.apply_split(panel_widgets))
         controls['cancel_split'].clicked.connect(lambda: self.toggle_split_mode(panel_widgets, False))
+        controls['cancel_rotate'].clicked.connect(lambda: self.toggle_rotate_mode(panel_widgets, False))
+
+        # Initial state
+        self._set_toolbar_mode(panel_widgets, 'normal')
 
         return panel_widgets
 
+    def toggle_split_mode(self, viewer_panel, enable):
+        viewer = viewer_panel['viewer']
+        viewer.set_splitting_mode(enable)
+        self.is_actively_editing = enable
+        self._set_toolbar_mode(viewer_panel, 'split' if enable else 'normal')
+
+        if not enable:
+            self._check_and_update_jump_button_animation()
+
+    def toggle_rotate_mode(self, viewer_panel, enable):
+        viewer = viewer_panel['viewer']
+        viewer.set_rotating_mode(enable)
+        self.is_actively_editing = enable
+        self._set_toolbar_mode(viewer_panel, 'rotate' if enable else 'normal')
+
+        if not enable:
+            self._check_and_update_jump_button_animation()
+
     def create_sidebar(self):
-        sidebar_dock = QDockWidget("Controls & Stats", self)
+        sidebar_dock = QDockWidget("Χειριστήρια & Στατιστικά", self)
         sidebar_dock.setAllowedAreas(Qt.RightDockWidgetArea)
         sidebar_dock.setFeatures(QDockWidget.DockWidgetMovable)
         sidebar_dock.setFixedWidth(320)
@@ -210,30 +423,43 @@ class MainWindow(QMainWindow):
         sidebar_layout.setSpacing(15)
         sidebar_dock.setWidget(sidebar_widget)
         
-        stats_group = QGroupBox("Performance Stats")
-        stats_layout = QFormLayout()
-        self.stats_labels = {
-            "ppm": QLabel("0.0"), "pending": QLabel("0"),
-            "staged": QLabel("0"), "total": QLabel("0")
-        }
-        stats_layout.addRow("Pages/Minute:", self.stats_labels['ppm'])
-        stats_layout.addRow("Pending Scans:", self.stats_labels['pending'])
-        stats_layout.addRow("Staged Books:", self.stats_labels['staged'])
-        stats_layout.addRow("Total Pages Today:", self.stats_labels['total'])
-        stats_group.setLayout(stats_layout)
+        # --- New Statistics Panel ---
+        stats_group = QGroupBox("Στατιστικά Απόδοσης")
+        stats_group_layout = QVBoxLayout(stats_group)
+        
+        stats_cards_widget = QWidget()
+        stats_cards_layout = QHBoxLayout(stats_cards_widget)
+        stats_cards_layout.setContentsMargins(0,0,0,0)
+        stats_cards_layout.setSpacing(10)
 
-        book_group = QGroupBox("Book Creation")
+        theme_name = self.app_config.get("theme", "Material Dark")
+        theme = config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+
+        self.speed_card = StatsCardWidget("ΣΕΛ./ΛΕΠΤΟ", "0.0", theme['PRIMARY'], theme)
+        self.pending_card = StatsCardWidget("ΕΚΚΡΕΜΕΙ", "0", theme['WARNING'], theme)
+        self.total_card = StatsCardWidget("ΣΥΝΟΛΟ ΣΗΜΕΡΑ", "0", theme['SUCCESS'], theme)
+        
+        stats_cards_layout.addWidget(self.speed_card)
+        stats_cards_layout.addWidget(self.pending_card)
+        stats_cards_layout.addWidget(self.total_card)
+        
+        stats_group_layout.addWidget(stats_cards_widget)
+
+        # --- Book Creation Panel ---
+        book_group = QGroupBox("Δημιουργία Βιβλίου")
         book_layout = QVBoxLayout()
         self.book_name_edit = QLineEdit()
-        self.book_name_edit.setPlaceholderText("Enter book name (from QR code)...")
-        create_book_btn = QPushButton("Create Book")
+        self.book_name_edit.setPlaceholderText("Εισαγωγή ονόματος βιβλίου (από QR code)...")
+        create_book_btn = QPushButton("Δημιουργία Βιβλίου")
+        create_book_btn.setToolTip("Δημιουργία ενός νέου βιβλίου από όλες τις εικόνες που βρίσκονται στον φάκελο σάρωσης.")
         create_book_btn.setProperty("class", "filled")
         create_book_btn.clicked.connect(self.create_book)
         book_layout.addWidget(self.book_name_edit)
         book_layout.addWidget(create_book_btn)
         book_group.setLayout(book_layout)
 
-        today_group = QGroupBox("Today's Books")
+        # --- Today's Books Panel ---
+        today_group = QGroupBox("Σημερινά Βιβλία")
         today_layout = QVBoxLayout(today_group)
         
         scroll_area = QScrollArea()
@@ -242,23 +468,24 @@ class MainWindow(QMainWindow):
         self.books_list_widget = QWidget()
         self.books_list_layout = QVBoxLayout(self.books_list_widget)
         self.books_list_layout.setAlignment(Qt.AlignTop)
-        self.books_list_layout.setSpacing(4)
+        self.books_list_layout.setSpacing(0) 
         scroll_area.setWidget(self.books_list_widget)
         
-        transfer_all_btn = QPushButton("Transfer All to Data")
-        transfer_all_btn.clicked.connect(self.transfer_all_books)
+        self.transfer_all_btn = QPushButton("Μεταφορά Όλων στα Δεδομένα")
+        self.transfer_all_btn.setToolTip("Μεταφορά όλων των ολοκληρωμένων βιβλίων από τον φάκελο 'Σημερινά' στο τελικό αρχείο δεδομένων.")
+        self.transfer_all_btn.setProperty("class", "filled")
+        self.transfer_all_btn.clicked.connect(self.transfer_all_books)
         
-        self.transfer_progress_bar = QProgressBar()
-        self.transfer_progress_bar.setVisible(False)
-        self.transfer_status_label = QLabel("")
-        self.transfer_status_label.setVisible(False)
-        
-        today_layout.addWidget(scroll_area)
-        today_layout.addWidget(transfer_all_btn)
-        today_layout.addWidget(self.transfer_status_label)
-        today_layout.addWidget(self.transfer_progress_bar)
+        self.view_log_btn = QPushButton("📖 Προβολή Αρχείου Καταγραφής")
+        self.view_log_btn.setToolTip("Άνοιγμα του παραθύρου με το πλήρες ιστορικό των βιβλίων που έχουν μεταφερθεί.")
+        self.view_log_btn.clicked.connect(self.open_log_viewer_dialog)
 
-        settings_btn = QPushButton("Settings")
+        today_layout.addWidget(scroll_area)
+        today_layout.addWidget(self.transfer_all_btn)
+        today_layout.addWidget(self.view_log_btn) # Προσθέστε το νέο κουμπί εδώ
+        
+        settings_btn = QPushButton("Ρυθμίσεις")
+        settings_btn.setToolTip("Άνοιγμα του παραθύρου ρυθμίσεων της εφαρμογής.")
         settings_btn.clicked.connect(self.open_settings_dialog)
 
         sidebar_layout.addWidget(stats_group)
@@ -269,6 +496,32 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.RightDockWidgetArea, sidebar_dock)
 
+    def _set_toolbar_mode(self, panel_widgets, mode):
+        """Controls the visibility of toolbar pills based on the interaction mode."""
+        # Valid modes: 'normal', 'split', 'rotate'
+        is_normal = (mode == 'normal')
+        is_split = (mode == 'split')
+        is_rotate = (mode == 'rotate')
+
+        # Toggle visibility of the main pills vs the confirmation pill
+        panel_widgets['tools_pill'].setVisible(is_normal)
+        panel_widgets['actions_pill'].setVisible(is_normal)
+        panel_widgets['confirmation_pill'].setVisible(not is_normal)
+        
+        if is_split:
+            panel_widgets['mode_label'].setText("ΔΙΑΧΩΡΙΣΜΟΣ")
+            panel_widgets['confirm_split'].setVisible(True)
+            panel_widgets['cancel_split'].setVisible(True)
+            panel_widgets['cancel_rotate'].setVisible(False)
+        elif is_rotate:
+            panel_widgets['mode_label'].setText("ΠΕΡΙΣΤΡΟΦΗ")
+            panel_widgets['confirm_split'].setVisible(False)
+            panel_widgets['cancel_split'].setVisible(False)
+            panel_widgets['cancel_rotate'].setVisible(True)
+        
+        # Ask the container to resize to fit the new visible content
+        panel_widgets['toolbar_container'].adjustSize()
+
     def create_bottom_bar(self, main_layout):
         bottom_bar = QFrame()
         bottom_bar.setObjectName("BottomBar")
@@ -277,12 +530,17 @@ class MainWindow(QMainWindow):
         bottom_bar_layout.setContentsMargins(15, 5, 15, 5)
         bottom_bar_layout.setSpacing(15)
 
-        self.status_label = QLabel("Pages 0-0 of 0")
+        self.status_label = QLabel("Σελίδες 0-0 από 0")
+        self.status_label.setWordWrap(True)
         
-        self.prev_btn = QPushButton("◀ Previous")
-        self.next_btn = QPushButton("Next ▶")
-        self.jump_end_btn = QPushButton("Jump to End")
-        self.refresh_btn = QPushButton("⟳ Refresh")
+        self.prev_btn = QPushButton("◀ Προηγούμενο")
+        self.prev_btn.setToolTip("Μετάβαση στο προηγούμενο ζεύγος σελίδων.")
+        self.next_btn = QPushButton("Επόμενο ▶")
+        self.next_btn.setToolTip("Μετάβαση στο επόμενο ζεύγος σελίδων.")
+        self.jump_end_btn = QPushButton("Μετάβαση στο Τέλος")
+        self.jump_end_btn.setToolTip("Μετάβαση στο τελευταίο ζεύγος σαρωμένων σελίδων.")
+        self.refresh_btn = QPushButton("⟳ Ανανέωση")
+        self.refresh_btn.setToolTip("Μη αυτόματη ανανέωση της λίστας των σαρωμένων εικόνων.")
 
         self.prev_btn.setProperty("class", "filled")
         self.next_btn.setProperty("class", "filled")
@@ -297,12 +555,14 @@ class MainWindow(QMainWindow):
         self.jump_end_btn.clicked.connect(self.jump_to_end)
         self.refresh_btn.clicked.connect(self.trigger_full_refresh)
         
-        self.delete_pair_btn = QPushButton("🗑️ Delete Pair")
+        self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Ζεύγους")
+        self.delete_pair_btn.setToolTip("Οριστική διαγραφή των δύο εικόνων που εμφανίζονται.")
         self.delete_pair_btn.setProperty("class", "destructive filled")
         self.delete_pair_btn.setMinimumHeight(40)
         self.delete_pair_btn.clicked.connect(self.delete_current_pair)
         
-        self.replace_pair_btn = QPushButton("🔁 Replace Pair")
+        self.replace_pair_btn = QPushButton("🔁 Αντικατάσταση Ζεύγους")
+        self.replace_pair_btn.setToolTip("Αντικατάσταση του τρέχοντος ζεύγους με τις δύο επόμενες σαρωμένες εικόνες.")
         self.replace_pair_btn.setMinimumHeight(40)
         self.replace_pair_btn.clicked.connect(self.toggle_replace_mode)
 
@@ -317,6 +577,7 @@ class MainWindow(QMainWindow):
         bottom_bar_layout.addWidget(self.delete_pair_btn)
 
         main_layout.addWidget(bottom_bar)
+
 
     @Slot()
     def trigger_full_refresh(self, force_reload_viewers=False):
@@ -369,8 +630,7 @@ class MainWindow(QMainWindow):
         self.scan_worker.file_operation_complete.connect(self.on_file_operation_complete)
         self.scan_worker.book_creation_progress.connect(self.on_book_creation_progress)
         self.scan_worker.transfer_preparation_complete.connect(self.on_transfer_preparation_complete)
-        self.scan_worker.transfer_started.connect(self.on_transfer_started)
-        self.scan_worker.transfer_progress.connect(self.on_transfer_progress)
+        self.scan_worker.file_operation_complete.connect(self.on_file_operation_complete)
         
         # ImageProcessor signals
         self.image_processor.image_loaded.connect(self.viewer1['viewer'].on_image_loaded)
@@ -378,11 +638,13 @@ class MainWindow(QMainWindow):
         self.image_processor.processing_complete.connect(self.on_processing_complete)
         self.image_processor.error.connect(self.show_error)
 
+        # ImageViewer -> ScanWorker
+        self.viewer1['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
+        self.viewer2['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
+
         # ImageViewer -> ImageProcessor
         self.viewer1['viewer'].load_requested.connect(self.image_processor.request_image_load)
         self.viewer2['viewer'].load_requested.connect(self.image_processor.request_image_load)
-        self.viewer1['viewer'].rotation_requested.connect(self.image_processor.get_rotated_pixmap)
-        self.viewer2['viewer'].rotation_requested.connect(self.image_processor.get_rotated_pixmap)
 
         # ImageViewer -> MainWindow (for editing state)
         self.viewer1['viewer'].crop_adjustment_started.connect(self.on_editing_started)
@@ -412,24 +674,33 @@ class MainWindow(QMainWindow):
     def on_initial_scan_complete(self, files):
         self.image_files = files
         
-        if self.current_index + 1 >= len(self.image_files) and len(self.image_files) > 0:
-            self.current_index = max(0, len(self.image_files) - 2)
-
+        # If this scan was triggered by a split operation, jump to the new pair
+        if hasattr(self, '_split_op_index') and self._split_op_index is not None:
+            # The split operation is complete. We now jump the view to the new pair.
+            # The first image of the new pair is at the index of the original image that was split.
+            self.current_index = self._split_op_index
+            self.current_index = max(0, self.current_index) # Ensure we don't go below zero.
+            self._split_op_index = None # Reset the flag for the next operation.
+        else:
+            # Original logic for jumping to the end on a regular refresh.
+            if self.current_index + 1 >= len(self.image_files) and len(self.image_files) > 0:
+                self.current_index = max(0, len(self.image_files) - 2)
+        
         force_reload = getattr(self, '_force_reload_on_next_scan', False)
         self.update_display(force_reload=force_reload)
         self._force_reload_on_next_scan = False
         
-        self.stats_labels['pending'].setText(str(len(self.image_files)))
+        self.pending_card.set_value(str(len(self.image_files)))
+        self.update_total_pages()
+
 
     @Slot(dict)
     def on_stats_updated(self, stats):
         staged_details = stats.get('staged_book_details', {})
-        staged_books_count = len(staged_details)
-        staged_pages_count = sum(staged_details.values())
-
-        self.stats_labels['staged'].setText(f"{staged_books_count} ({staged_pages_count} pages)")
-        total_pages = staged_pages_count + stats.get('pages_in_data', 0) + len(self.image_files)
-        self.stats_labels['total'].setText(str(total_pages))
+        
+        self.staged_pages_count = sum(staged_details.values())
+        self.data_pages_count = stats.get('pages_in_data', 0)
+        self.update_total_pages()
 
         for i in reversed(range(self.books_list_layout.count())): 
             self.books_list_layout.itemAt(i).widget().setParent(None)
@@ -463,12 +734,19 @@ class MainWindow(QMainWindow):
             if len(self.replace_candidates) >= 2:
                 self.execute_replace()
             else:
-                self.status_label.setText("Waiting for 1 more scan to replace pair...")
+                self.status_label.setText("Αναμονή για 1 ακόμα σάρωση για αντικατάσταση του ζεύγους...")
             return
 
         if path not in self.image_files:
             self.image_files.append(path)
             self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+            
+            # --- Performance Tracking ---
+            self.scan_timestamps.append(time.time())
+            self.update_scan_speed()
+            self.pending_card.set_value(str(len(self.image_files)))
+            self.update_total_pages()
+            # --------------------------
             
             auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
             auto_color = self.app_config.get("auto_color_correction_enabled", False)
@@ -479,11 +757,10 @@ class MainWindow(QMainWindow):
                 self.update_timer.start()
             
             self._check_and_update_jump_button_animation() # Always check
-            self.stats_labels['pending'].setText(str(len(self.image_files)))
 
     @Slot(str)
     def show_error(self, message):
-        QMessageBox.critical(self, "Worker Error", message)
+        QMessageBox.critical(self, "Σφάλμα Εργασιών", message)
 
     def update_display(self, force_reload=False):
         path1 = self.image_files[self.current_index] if self.current_index < len(self.image_files) else None
@@ -496,14 +773,35 @@ class MainWindow(QMainWindow):
         page1_num = self.current_index + 1 if path1 else 0
         page2_num = self.current_index + 2 if path2 else 0
 
-        status_text = f"Pages {page1_num}-{page2_num} of {total}" if path2 else f"Page {page1_num} of {total}"
-        if not path1: status_text = "No images found."
+        status_text = f"Σελίδες {page1_num}-{page2_num} από {total}" if path2 else f"Σελίδα {page1_num} από {total}"
+        if not path1: status_text = "Δεν βρέθηκαν εικόνες."
         self.status_label.setText(status_text)
         
         self.prev_btn.setEnabled(self.current_index > 0)
         self.next_btn.setEnabled(self.current_index + 2 < len(self.image_files))
         self._check_and_update_jump_button_animation()
 
+    @Slot()
+    def update_scan_speed(self):
+        if len(self.scan_timestamps) < 2:
+            self.speed_card.set_value("0.0")
+            return
+
+        delta_time_seconds = self.scan_timestamps[-1] - self.scan_timestamps[0]
+        if delta_time_seconds < 1: # Avoid division by zero or inflated numbers for very fast scans
+             self.speed_card.set_value("---") # Indicate high speed
+             return
+
+        # We have len-1 intervals over len timestamps
+        scans_in_period = len(self.scan_timestamps) - 1
+        pages_per_minute = (scans_in_period / delta_time_seconds) * 60
+        self.speed_card.set_value(f"{pages_per_minute:.1f}")
+
+    @Slot()
+    def update_total_pages(self):
+        """Calculates and updates the total pages for the day."""
+        total = self.staged_pages_count + self.data_pages_count + len(self.image_files)
+        self.total_card.set_value(str(total))
 
     def next_pair(self):
         if self.is_actively_editing or self.replace_mode_active: return
@@ -549,19 +847,29 @@ class MainWindow(QMainWindow):
             
             self.image_processor.set_caching_enabled(self.app_config.get("caching_enabled", True))
 
-            if self.watcher:
+            if self.watcher and self.watcher.thread:
+                # Disconnect signals to prevent calls to a worker that is about to be replaced.
+                try:
+                    self.watcher.new_image_detected.disconnect()
+                    self.watcher.scan_folder_changed.disconnect()
+                    self.watcher.error.disconnect()
+                except RuntimeError:
+                    pass  # Signals may already be disconnected, which is fine.
+                
+                # Gracefully stop the old watcher thread.
                 self.watcher.stop()
-                self.watcher.thread.wait() 
+                self.watcher.thread.wait(2000) # Wait up to 2 seconds
+
+            # Re-initialize workers and restart the watcher.
             self.setup_workers()
-            self.connect_signals()
             self.trigger_full_refresh()
 
     def delete_single_image(self, viewer_panel):
         if self.replace_mode_active: return
         image_path = viewer_panel['viewer'].image_path
         if not image_path: return
-        reply = QMessageBox.question(self, "Confirm Deletion",
-                                     f"Are you sure you want to permanently delete this image?\n\n{os.path.basename(image_path)}",
+        reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
+                                     f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα;\n\n{os.path.basename(image_path)}",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             # Proactively clear UI and cache before telling worker to delete
@@ -576,8 +884,8 @@ class MainWindow(QMainWindow):
         paths_to_delete = [p for p in [path1, path2] if p]
         if not paths_to_delete: return
         file_names = "\n".join([os.path.basename(p) for p in paths_to_delete])
-        reply = QMessageBox.question(self, "Confirm Deletion",
-                                     f"Are you sure you want to permanently delete these images?\n\n{file_names}",
+        reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
+                                     f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτές τις εικόνες;\n\n{file_names}",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             # Proactively clear UI and cache
@@ -589,15 +897,15 @@ class MainWindow(QMainWindow):
 
     def create_book(self):
         book_name = self.book_name_edit.text().strip()
-        if not book_name: return self.show_error("Book name cannot be empty.")
-        if not self.image_files: return self.show_error("There are no scanned images to add to a book.")
+        if not book_name: return self.show_error("Το όνομα του βιβλίου δεν μπορεί να είναι κενό.")
+        if not self.image_files: return self.show_error("Δεν υπάρχουν σαρωμένες εικόνες για να προστεθούν σε ένα βιβλίο.")
         
-        reply = QMessageBox.question(self, "Confirm Book Creation",
-                                     f"Create book '{book_name}' and move {len(self.image_files)} scans into it?",
+        reply = QMessageBox.question(self, "Επιβεβαίωση Δημιουργίας Βιβλίου",
+                                     f"Δημιουργία βιβλίου '{book_name}' και μετακίνηση {len(self.image_files)} σαρώσεων σε αυτό;",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.progress_dialog = QProgressDialog(f"Creating book '{book_name}'...", "Cancel", 0, len(self.image_files), self)
-            self.progress_dialog.setWindowTitle("Transferring Images")
+            self.progress_dialog = QProgressDialog(f"Δημιουργία βιβλίου '{book_name}'...", "Ακύρωση", 0, len(self.image_files), self)
+            self.progress_dialog.setWindowTitle("Μεταφορά Εικόνων")
             self.progress_dialog.setWindowModality(Qt.WindowModal)
             self.progress_dialog.setAutoClose(True)
             self.progress_dialog.canceled.connect(self.scan_worker.cancel_operation)
@@ -616,8 +924,8 @@ class MainWindow(QMainWindow):
     def restore_image(self, viewer_panel):
         image_path = viewer_panel['viewer'].image_path
         if not image_path: return
-        reply = QMessageBox.question(self, "Confirm Restore",
-                                     f"Restore the original image? This will overwrite any changes.\n\n{os.path.basename(image_path)}",
+        reply = QMessageBox.question(self, "Επιβεβαίωση Επαναφοράς",
+                                     f"Επαναφορά της αρχικής εικόνας; Αυτό θα αντικαταστήσει τυχόν αλλαγές.\n\n{os.path.basename(image_path)}",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.image_processor.clear_cache_for_paths([image_path])
@@ -629,110 +937,139 @@ class MainWindow(QMainWindow):
     @Slot(list, list)
     def on_transfer_preparation_complete(self, moves_to_confirm, warnings):
         if not moves_to_confirm and not warnings:
-            QMessageBox.information(self, "No Books", "There are no valid books in the staging folder to transfer.")
+            QMessageBox.information(self, "Δεν Υπάρχουν Βιβλία", "Δεν υπάρχουν έγκυρα βιβλία στον φάκελο προσωρινής στάθμευσης για μεταφορά.")
             return
             
         moves_details = [f"'{move['book_name']}'\n  -> '{move['final_book_path']}'" for move in moves_to_confirm]
-        confirmation_message = "The following books will be transferred:\n\n" + "\n\n".join(moves_details)
+        confirmation_message = "Τα ακόλουθα βιβλία θα μεταφερθούν:\n\n" + "\n\n".join(moves_details)
         if warnings:
-            confirmation_message += "\n\nWarnings (these books will be skipped):\n" + "\n".join(warnings)
-        confirmation_message += "\n\nDo you want to proceed?"
+            confirmation_message += "\n\nΠροειδοποιήσεις (αυτά τα βιβλία θα παραλειφθούν):\n" + "\n".join(warnings)
+        confirmation_message += "\n\nΘέλετε να συνεχίσετε;"
 
-        reply = QMessageBox.question(self, "Confirm Transfer", confirmation_message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes: self.scan_worker.transfer_all_to_data(moves_to_confirm)
+        reply = QMessageBox.question(self, "Επιβεβαίωση Μεταφοράς", confirmation_message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # Show a "Please Wait" dialog as this can be a long operation
+            self.transfer_progress_dialog = QProgressDialog("Μεταφορά βιβλίων στα δεδομένα...\n\nΑυτή η διαδικασία μπορεί να διαρκέσει μερικά λεπτά.", None, 0, 0, self)
+            self.transfer_progress_dialog.setWindowTitle("Παρακαλώ Περιμένετε")
+            self.transfer_progress_dialog.setCancelButton(None)  # Make it non-cancellable
+            self.transfer_progress_dialog.setWindowModality(Qt.WindowModal)
+            self.transfer_progress_dialog.show()
 
-    @Slot(int, int)
-    def on_transfer_started(self, total_books, total_pages):
-        self.transfer_progress_bar.setRange(0, total_pages)
-        self.transfer_progress_bar.setValue(0)
-        self.transfer_progress_bar.setVisible(True)
-        self.transfer_status_label.setText(f"Starting transfer of {total_books} books...")
-        self.transfer_status_label.setVisible(True)
-
-    @Slot(str, int, int)
-    def on_transfer_progress(self, book_name, book_pages_done, total_pages_done):
-        self.transfer_progress_bar.setValue(total_pages_done)
-        self.transfer_status_label.setText(f"Transferring: {book_name} ({book_pages_done} pages)")
+            self.transfer_all_btn.setEnabled(False)
+            self.status_label.setText(f"Μεταφορά {len(moves_to_confirm)} βιβλίων...")
+            QApplication.processEvents()
+            self.scan_worker.transfer_all_to_data(moves_to_confirm)
 
     @Slot(str, str)
     def on_file_operation_complete(self, operation_type, message_or_path):
         """Handles the UI updates after a file operation from the worker is complete."""
-        self.is_actively_editing = False # Reset editing state after any operation
-        
-        force_reload = operation_type in ["crop", "restore", "replace_pair"]
-        
-        if operation_type in ["crop", "restore", "split", "delete", "create_book", "replace_pair"]:
-            self.trigger_full_refresh(force_reload_viewers=force_reload)
-        
-        elif operation_type == "transfer_all":
-            self.transfer_progress_bar.setVisible(False)
-            self.transfer_status_label.setVisible(False)
-            self.scan_worker.calculate_today_stats()
+        self.is_actively_editing = False  # Reset editing state after any operation
+
+        # Targeted refresh for single-image edits that don't change the file list
+        if operation_type in ["crop", "color_fix", "restore", "rotate"]:
+            path = message_or_path
+            if self.viewer1['viewer'].image_path == path:
+                self.viewer1['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
+            if self.viewer2['viewer'].image_path == path:
+                self.viewer2['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
+
+        elif operation_type == "split":
+            self.viewer1['viewer'].set_splitting_mode(False)
+            self.viewer2['viewer'].set_splitting_mode(False)
             
+            self.image_processor.clear_cache()
+            
+            self.status_label.setText("Ανανέωση λίστας αρχείων...")
+            self.trigger_full_refresh(force_reload_viewers=True)
+
+        elif operation_type in ["delete", "create_book", "replace_pair"]:
+            self.viewer1['viewer'].clear_image()
+            self.viewer2['viewer'].clear_image()
+            self.status_label.setText("Ανανέωση λίστας αρχείων...")
+            self.trigger_full_refresh(force_reload_viewers=True)
+
+        elif operation_type == "transfer_all":
+            if hasattr(self, 'transfer_progress_dialog'):
+                self.transfer_progress_dialog.close()
+                del self.transfer_progress_dialog
+
+            self.transfer_all_btn.setEnabled(True)
+            self.statusBar().showMessage(message_or_path, 5000)
+            self.trigger_full_refresh()
+
         self._check_and_update_jump_button_animation()
+
 
     def apply_crop(self, viewer_panel):
         viewer = viewer_panel['viewer']
-        if viewer.image_path and viewer.is_cropping:
+        if viewer.image_path and viewer.interaction_mode == InteractionMode.CROPPING:
             crop_rect = viewer.get_image_space_crop_rect()
             if crop_rect:
                 self.image_processor.clear_cache_for_paths([viewer.image_path])
                 self.scan_worker.crop_and_save_image(viewer.image_path, crop_rect)
-
-    def toggle_split_mode(self, viewer_panel, enable):
+    
+    def apply_color_fix(self, viewer_panel):
         viewer = viewer_panel['viewer']
-        viewer.set_splitting_mode(enable)
-        self.is_actively_editing = enable
+        if viewer.image_path:
+            self.image_processor.clear_cache_for_paths([viewer.image_path])
+            self.scan_worker.correct_color_and_save(viewer.image_path)
 
-        # Toggle visibility of the buttons
-        viewer_panel['split'].setVisible(not enable)
-        viewer_panel['crop'].setVisible(not enable)
-        viewer_panel['restore'].setVisible(not enable)
-        viewer_panel['delete'].setVisible(not enable)
-        
-        viewer_panel['confirm_split'].setVisible(enable)
-        viewer_panel['cancel_split'].setVisible(enable)
-        
-        if not enable:
-            self._check_and_update_jump_button_animation()
-
+    
 
     def apply_split(self, viewer_panel):
         viewer = viewer_panel['viewer']
         if viewer.image_path:
+            path_to_split = viewer.image_path
+            if path_to_split in self.image_files:
+                self._split_op_index = self.image_files.index(path_to_split)
+            else:
+                self._split_op_index = None
+
             split_x = viewer.get_split_x_in_image_space()
             if split_x is not None:
-                self.image_processor.clear_cache_for_paths([viewer.image_path])
-                self.scan_worker.split_image(viewer.image_path, split_x)
+                self.image_processor.clear_cache_for_paths([path_to_split])
+                self.scan_worker.split_image(path_to_split, split_x)
+        
         self.toggle_split_mode(viewer_panel, False)
 
     def toggle_replace_mode(self):
         self.replace_mode_active = not self.replace_mode_active
         
+        theme_name = self.app_config.get("theme", "Material Dark")
+        theme = config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+        
         if self.replace_mode_active:
-            # Check if there's a valid pair to replace
             path1 = self.viewer1['viewer'].image_path
             path2 = self.viewer2['viewer'].image_path
             if not path1 or not path2:
-                QMessageBox.warning(self, "Action Blocked", "A full pair must be on screen to use Replace mode.")
+                QMessageBox.warning(self, "Η Ενέργεια Αποκλείστηκε", "Πρέπει να υπάρχει ένα πλήρες ζεύγος στην οθόνη για τη χρήση της λειτουργίας Αντικατάστασης.")
                 self.replace_mode_active = False
                 return
 
-            self.replace_pair_btn.setText("❌ Cancel Replace")
+            self.replace_pair_btn.setText("❌ Ακύρωση Αντικατάστασης")
             self.replace_pair_btn.setProperty("class", "destructive filled")
-            self.status_label.setText("Waiting for 2 new scans to replace pair...")
-            # Visual cue for which viewers are targeted
-            self.viewer1['frame'].setStyleSheet("border: 2px dashed #ffb4ab;")
-            self.viewer2['frame'].setStyleSheet("border: 2px dashed #ffb4ab;")
+            self.status_label.setText("Αναμονή για 2 νέες σαρώσεις για αντικατάσταση του ζεύγους...")
+
+            tertiary_color = QColor(theme['TERTIARY'])
+            tertiary_rgb = tertiary_color.getRgb()
+            accent_style = f"""
+                QFrame#ViewerFrame {{
+                    background-color: rgba({tertiary_rgb[0]}, {tertiary_rgb[1]}, {tertiary_rgb[2]}, 25);
+                    border: 1px solid {theme['TERTIARY']};
+                    border-radius: 12px;
+                }}
+            """
+            self.viewer1['frame'].setStyleSheet(accent_style)
+            self.viewer2['frame'].setStyleSheet(accent_style)
             self.replace_candidates = []
         else:
-            self.replace_pair_btn.setText("🔁 Replace Pair")
+            self.replace_pair_btn.setText("🔁 Αντικατάσταση Ζεύγους")
             self.replace_pair_btn.setProperty("class", "")
+            
             self.viewer1['frame'].setStyleSheet("")
             self.viewer2['frame'].setStyleSheet("")
-            self.update_display() # Restore original status text
+            self.update_display() 
         
-        # Re-apply stylesheet to update button appearance
         self.replace_pair_btn.style().unpolish(self.replace_pair_btn)
         self.replace_pair_btn.style().polish(self.replace_pair_btn)
 

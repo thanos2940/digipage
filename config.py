@@ -56,7 +56,7 @@ THEMES = {
         "ON_SURFACE_VARIANT": "#c8c5d0",
         "OUTLINE": "#928f99",
         "SUCCESS": "#73d983",
-        "DESTRUCTIVE": "#ffb4ab",
+        "DESTRUCTIVE": "#bb3223",
         "WARNING": "#ffd965",
         "ON_DESTRUCTIVE": "#690005",
         "ON_SUCCESS": "#003916",
@@ -70,14 +70,14 @@ THEMES = {
         "ON_PRIMARY": "#ffffff",
         "SECONDARY": "#8A8F94",
         "ON_SECONDARY": "#ffffff",
-        "TERTIARY": "#ffc107",
+        "TERTIARY": "#c4730a",
         "ON_TERTIARY": "#000000",
         "SURFACE": "#2b2b2b",
         "ON_SURFACE": "#dcdcdc",
         "ON_SURFACE_VARIANT": "#888888",
         "OUTLINE": "#444444",
         "SUCCESS": "#28a745",
-        "DESTRUCTIVE": "#dc3545",
+        "DESTRUCTIVE": "#b62d3b",
         "WARNING": "#ffc107",
         "ON_DESTRUCTIVE": "#ffffff",
         "ON_SUCCESS": "#ffffff",
@@ -88,20 +88,20 @@ THEMES = {
         "FRAME_BG": "#2C354D",
         "SURFACE_CONTAINER": "#3A435E",
         "PRIMARY": "#6C95FF",
-        "ON_PRIMARY": "#E1E6F5",
+        "ON_PRIMARY": "#ffffff", # Changed from dark blue for high contrast
         "SECONDARY": "#8993B3",
         "ON_SECONDARY": "#E1E6F5",
-        "TERTIARY": "#FFD166",
+        "TERTIARY": "#CA6E04",
         "ON_TERTIARY": "#000000",
         "SURFACE": "#262D3F",
         "ON_SURFACE": "#D0D5E8",
         "ON_SURFACE_VARIANT": "#8993B3",
         "OUTLINE": "#3E486B",
         "SUCCESS": "#33B579",
-        "DESTRUCTIVE": "#FF6B6B",
+        "DESTRUCTIVE": "#C44646",
         "WARNING": "#FFD166",
         "ON_DESTRUCTIVE": "#ffffff",
-        "ON_SUCCESS": "#000000",
+        "ON_SUCCESS": "#ffffff", # Changed from black for high contrast
         "ON_WARNING": "#000000",
     }
 }
@@ -127,10 +127,11 @@ def generate_stylesheet(theme_name="Material Dark"):
         QLabel {{ background-color: transparent; padding: 2px; }}
 
         /* --- Buttons --- */
+        /* Default button is the 'tonal' style for secondary actions */
         QPushButton, QToolButton {{
             background-color: {theme['SURFACE_CONTAINER']};
-            color: {theme['PRIMARY']};
-            border: 1px solid {theme['OUTLINE']};
+            color: {lighten_color(theme['PRIMARY'],0.2)};
+            border: none;
             padding: 8px 16px;
             border-radius: 16px;
             font-weight: bold;
@@ -139,7 +140,7 @@ def generate_stylesheet(theme_name="Material Dark"):
             background-color: {lighten_color(theme['SURFACE_CONTAINER'], 0.1)};
         }}
         QPushButton:pressed, QToolButton:pressed {{
-            background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.1)};
+            background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.2)};
         }}
         QPushButton:disabled, QToolButton:disabled {{
             background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.2)};
@@ -147,11 +148,10 @@ def generate_stylesheet(theme_name="Material Dark"):
             border-color: {darken_color(theme['OUTLINE'], 0.2)};
         }}
 
-        /* Filled Buttons */
+        /* Filled Buttons for primary, high-emphasis actions */
         QPushButton[class~="filled"] {{
             background-color: {theme['PRIMARY']};
             color: {theme['ON_PRIMARY']};
-            border: none;
         }}
         QPushButton[class~="filled"]:hover {{
             background-color: {lighten_color(theme['PRIMARY'], 0.1)};
@@ -161,7 +161,6 @@ def generate_stylesheet(theme_name="Material Dark"):
         QPushButton[class~="destructive"] {{
             background-color: {theme['DESTRUCTIVE']};
             color: {theme['ON_DESTRUCTIVE']};
-            border: none;
         }}
         QPushButton[class~="destructive"]:hover {{
             background-color: {lighten_color(theme['DESTRUCTIVE'], 0.1)};
@@ -171,17 +170,36 @@ def generate_stylesheet(theme_name="Material Dark"):
         QPushButton[class~="success"] {{
             background-color: {theme['SUCCESS']};
             color: {theme['ON_SUCCESS']};
-            border: none;
         }}
         QPushButton[class~="success"]:hover {{
             background-color: {lighten_color(theme['SUCCESS'], 0.1)};
         }}
 
-        /* ToolButtons for icons */
-        QToolButton {{
-            padding: 6px;
-            font-size: 14pt;
+        /* --- Floating Toolbar --- */
+        QFrame#FloatingToolbar {{
+            background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.15)};
+            border: 1px solid {theme['OUTLINE']};
+            border-radius: 24px; /* Pill shape */
         }}
+        
+        QFrame#FloatingToolbar QToolButton {{
+            background-color: transparent;
+            color: {theme['ON_SURFACE_VARIANT']};
+            font-size: 14pt;
+            padding: 8px;
+            border-radius: 12px;
+        }}
+        QFrame#FloatingToolbar QToolButton:hover {{
+            background-color: rgba(255, 255, 255, 0.1);
+            color: {theme['ON_SURFACE']};
+        }}
+
+        
+        
+        /* Specific overrides for icon buttons */
+        QToolButton#crop_button {{ color: {theme['SUCCESS']}; }}
+        QToolButton#delete_button {{ color: {theme['DESTRUCTIVE']}; }}
+
 
         /* --- LineEdits --- */
         QLineEdit {{

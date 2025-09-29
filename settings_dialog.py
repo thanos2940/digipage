@@ -14,7 +14,7 @@ import os
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("DigiPage Scanner - Settings")
+        self.setWindowTitle("DigiPage Scanner - Ρυθμίσεις")
         self.setMinimumSize(700, 600)
 
         # Load current config
@@ -47,56 +47,56 @@ class SettingsDialog(QDialog):
         # --- Scan Folder ---
         self.scan_folder_edit = QLineEdit()
         self.scan_folder_edit.setReadOnly(True)
-        scan_folder_btn = QPushButton("Browse...")
-        scan_folder_btn.clicked.connect(lambda: self.browse_folder(self.scan_folder_edit, "Select Scan Folder"))
+        scan_folder_btn = QPushButton("Αναζήτηση...")
+        scan_folder_btn.clicked.connect(lambda: self.browse_folder(self.scan_folder_edit, "Επιλογή Φακέλου Σάρωσης"))
         scan_folder_layout = QHBoxLayout()
         scan_folder_layout.addWidget(self.scan_folder_edit)
         scan_folder_layout.addWidget(scan_folder_btn)
-        layout.addRow("Scan Folder:", scan_folder_layout)
+        layout.addRow("Φάκελος Σάρωσης:", scan_folder_layout)
 
         # --- Today's Books Folder ---
         self.today_folder_edit = QLineEdit()
         self.today_folder_edit.setReadOnly(True)
-        today_folder_btn = QPushButton("Browse...")
-        today_folder_btn.clicked.connect(lambda: self.browse_folder(self.today_folder_edit, "Select Today's Books Folder"))
+        today_folder_btn = QPushButton("Αναζήτηση...")
+        today_folder_btn.clicked.connect(lambda: self.browse_folder(self.today_folder_edit, "Επιλογή Φακέλου Σημερινών Βιβλίων"))
         today_folder_layout = QHBoxLayout()
         today_folder_layout.addWidget(self.today_folder_edit)
         today_folder_layout.addWidget(today_folder_btn)
-        layout.addRow("Today's Books Folder:", today_folder_layout)
+        layout.addRow("Φάκελος Σημερινών Βιβλίων:", today_folder_layout)
         
         # --- Caching Checkbox ---
-        self.caching_checkbox = QCheckBox("Enable Image Caching for Performance")
-        self.caching_checkbox.setToolTip("When enabled, images are kept in memory for faster reloading. Disable for testing or to save RAM.")
+        self.caching_checkbox = QCheckBox("Ενεργοποίηση Προσωρινής Αποθήκευσης Εικόνων για Απόδοση")
+        self.caching_checkbox.setToolTip("Όταν είναι ενεργοποιημένη, οι εικόνες διατηρούνται στη μνήμη για ταχύτερη επαναφόρτωση. Απενεργοποιήστε για δοκιμές ή για εξοικονόμηση μνήμης RAM.")
         layout.addRow(self.caching_checkbox)
 
 
         # --- City Data Paths ---
-        layout.addRow(QLabel("City Data Paths:"))
+        layout.addRow(QLabel("Διαδρομές Δεδομένων Πόλεων:"))
         self.city_list_widget = QListWidget()
         self.city_list_widget.itemSelectionChanged.connect(self.on_city_selected)
         layout.addRow(self.city_list_widget)
 
         city_form_layout = QFormLayout()
         self.city_code_edit = QLineEdit()
-        self.city_code_edit.setPlaceholderText("e.g., 001")
+        self.city_code_edit.setPlaceholderText("π.χ., 001")
         self.city_code_edit.setMaxLength(3)
-        city_form_layout.addRow("City Code:", self.city_code_edit)
+        city_form_layout.addRow("Κωδικός Πόλης:", self.city_code_edit)
 
         self.city_path_edit = QLineEdit()
         self.city_path_edit.setReadOnly(True)
-        city_path_btn = QPushButton("Browse...")
-        city_path_btn.clicked.connect(lambda: self.browse_folder(self.city_path_edit, "Select City Data Folder"))
+        city_path_btn = QPushButton("Αναζήτηση...")
+        city_path_btn.clicked.connect(lambda: self.browse_folder(self.city_path_edit, "Επιλογή Φακέλου Δεδομένων Πόλης"))
         city_path_layout = QHBoxLayout()
         city_path_layout.addWidget(self.city_path_edit)
         city_path_layout.addWidget(city_path_btn)
-        city_form_layout.addRow("Folder Path:", city_path_layout)
+        city_form_layout.addRow("Διαδρομή Φακέλου:", city_path_layout)
         layout.addRow(city_form_layout)
 
         city_button_layout = QHBoxLayout()
-        add_update_btn = QPushButton("Add/Update")
+        add_update_btn = QPushButton("Προσθήκη/Ενημέρωση")
         add_update_btn.setProperty("class", "filled")
         add_update_btn.clicked.connect(self.add_update_city)
-        remove_btn = QPushButton("Remove")
+        remove_btn = QPushButton("Αφαίρεση")
         remove_btn.setProperty("class", "destructive")
         remove_btn.clicked.connect(self.remove_city)
         city_button_layout.addStretch()
@@ -104,7 +104,7 @@ class SettingsDialog(QDialog):
         city_button_layout.addWidget(remove_btn)
         layout.addRow(city_button_layout)
 
-        self.tab_widget.addTab(tab, "Paths & Workflow")
+        self.tab_widget.addTab(tab, "Διαδρομές & Ροή Εργασίας")
 
     def create_lighting_correction_tab(self):
         tab = QWidget()
@@ -113,36 +113,36 @@ class SettingsDialog(QDialog):
         # --- Reference Images Folder ---
         self.ref_folder_edit = QLineEdit()
         self.ref_folder_edit.setReadOnly(True)
-        ref_folder_btn = QPushButton("Browse...")
-        ref_folder_btn.clicked.connect(lambda: self.browse_folder(self.ref_folder_edit, "Select Folder with Reference Images"))
+        ref_folder_btn = QPushButton("Αναζήτηση...")
+        ref_folder_btn.clicked.connect(lambda: self.browse_folder(self.ref_folder_edit, "Επιλογή Φακέλου με Εικόνες Αναφοράς"))
         ref_folder_layout = QHBoxLayout()
         ref_folder_layout.addWidget(self.ref_folder_edit)
         ref_folder_layout.addWidget(ref_folder_btn)
-        layout.addRow("Reference Images Folder:", ref_folder_layout)
+        layout.addRow("Φάκελος Εικόνων Αναφοράς:", ref_folder_layout)
 
         # --- Calculate Standard Button ---
-        calc_btn = QPushButton("Calculate and Save Standard")
+        calc_btn = QPushButton("Υπολογισμός και Αποθήκευση Προτύπου")
         calc_btn.setProperty("class", "filled")
         calc_btn.clicked.connect(self.calculate_and_save_standard)
         layout.addRow(calc_btn)
 
         # --- Auto Correction Toggles ---
-        layout.addRow(QLabel("Automatic Corrections on New Scans:"))
-        self.auto_lighting_checkbox = QCheckBox("Auto-adjust Lighting & Contrast")
-        self.auto_color_checkbox = QCheckBox("Auto-correct Color Tint")
-        self.auto_sharpen_checkbox = QCheckBox("Apply gentle Sharpening")
+        layout.addRow(QLabel("Αυτόματες Διορθώσεις σε Νέες Σαρώσεις:"))
+        self.auto_lighting_checkbox = QCheckBox("Αυτόματη Προσαρμογή Φωτισμού & Αντίθεσης")
+        self.auto_color_checkbox = QCheckBox("Αυτόματη Διόρθωση Απόχρωσης Χρώματος")
+        self.auto_sharpen_checkbox = QCheckBox("Εφαρμογή ήπιας Ευκρίνειας")
         layout.addRow(self.auto_lighting_checkbox)
         layout.addRow(self.auto_color_checkbox)
         layout.addRow(self.auto_sharpen_checkbox)
 
-        self.tab_widget.addTab(tab, "Lighting & Correction")
+        self.tab_widget.addTab(tab, "Φωτισμός & Διόρθωση")
 
     def create_theme_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setAlignment(Qt.AlignTop)
 
-        layout.addWidget(QLabel("Select a theme to apply it immediately:"))
+        layout.addWidget(QLabel("Επιλέξτε ένα θέμα για άμεση εφαρμογή:"))
 
         button_layout = QHBoxLayout()
         for theme_name in config.THEMES.keys():
@@ -152,7 +152,7 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(button_layout)
         layout.addStretch()
-        self.tab_widget.addTab(tab, "Theme")
+        self.tab_widget.addTab(tab, "Θέμα")
 
     def browse_folder(self, line_edit, title):
         folder_path = QFileDialog.getExistingDirectory(self, title, line_edit.text())
@@ -191,11 +191,11 @@ class SettingsDialog(QDialog):
         path = self.city_path_edit.text().strip()
 
         if not code or not path:
-            QMessageBox.warning(self, "Input Error", "City code and path cannot be empty.")
+            QMessageBox.warning(self, "Σφάλμα Εισόδου", "Ο κωδικός πόλης και η διαδρομή δεν μπορούν να είναι κενά.")
             return
 
         if not code.isdigit() or len(code) != 3:
-            QMessageBox.warning(self, "Input Error", "City code must be exactly 3 digits.")
+            QMessageBox.warning(self, "Σφάλμα Εισόδου", "Ο κωδικός πόλης πρέπει να είναι ακριβώς 3 ψηφία.")
             return
 
         self.city_paths[code] = path
@@ -206,13 +206,13 @@ class SettingsDialog(QDialog):
     def remove_city(self):
         selected_items = self.city_list_widget.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Selection Error", "Please select a city to remove.")
+            QMessageBox.warning(self, "Σφάλμα Επιλογής", "Παρακαλώ επιλέξτε μια πόλη για αφαίρεση.")
             return
 
         item_text = selected_items[0].text()
         code = item_text.split(":", 1)[0].strip()
 
-        reply = QMessageBox.question(self, "Confirm Deletion", f"Are you sure you want to remove the mapping for city code '{code}'?")
+        reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής", f"Είστε βέβαιοι ότι θέλετε να αφαιρέσετε την αντιστοίχιση για τον κωδικό πόλης '{code}'?")
         if reply == QMessageBox.Yes:
             if code in self.city_paths:
                 del self.city_paths[code]
@@ -221,19 +221,19 @@ class SettingsDialog(QDialog):
     def calculate_and_save_standard(self):
         folder_path = self.ref_folder_edit.text()
         if not os.path.isdir(folder_path):
-            QMessageBox.critical(self, "Error", "The specified path is not a valid folder.")
+            QMessageBox.critical(self, "Σφάλμα", "Η καθορισμένη διαδρομή δεν είναι έγκυρος φάκελος.")
             return
 
         image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS]
 
         if not image_files:
-            QMessageBox.warning(self, "No Images Found", "The selected folder contains no supported image files.")
+            QMessageBox.warning(self, "Δεν Βρέθηκαν Εικόνες", "Ο επιλεγμένος φάκελος δεν περιέχει υποστηριζόμενα αρχεία εικόνων.")
             return
 
         try:
             pil_images = [Image.open(p).convert('RGB') for p in image_files]
             if not pil_images:
-                QMessageBox.warning(self, "Warning", "No valid images could be opened.")
+                QMessageBox.warning(self, "Προειδοποίηση", "Δεν ήταν δυνατή η πρόσβαση σε έγκυρες εικόνες.")
                 return
 
             target_size = pil_images[0].size
@@ -251,9 +251,9 @@ class SettingsDialog(QDialog):
             template_image.save(template_path)
 
             self.current_config['lighting_standard_metrics'] = {'histogram_template_path': template_path}
-            QMessageBox.information(self, "Success", f"Successfully calculated standard from {len(pil_images)} images.\nTemplate saved to: {template_path}")
+            QMessageBox.information(self, "Επιτυχία", f"Υπολογίστηκε με επιτυχία το πρότυπο από {len(pil_images)} εικόνες.\nΠρότυπο αποθηκεύτηκε στη διαδρομή: {template_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Calculation Failed", f"An error occurred: {e}")
+            QMessageBox.critical(self, "Αποτυχία Υπολογισμού", f"Προέκυψε ένα σφάλμα: {e}")
 
     def apply_theme(self, theme_name):
         self.current_config["theme"] = theme_name
@@ -263,7 +263,7 @@ class SettingsDialog(QDialog):
     def save_settings(self):
         # Validation
         if not self.scan_folder_edit.text() or not self.today_folder_edit.text():
-            QMessageBox.warning(self, "Validation Error", "Scan Folder and Today's Books Folder must be set.")
+            QMessageBox.warning(self, "Σφάλμα Επικύρωσης", "Ο Φάκελος Σάρωσης και ο Φάκελος Σημερινών Βιβλίων πρέπει να οριστούν.")
             return
 
         # Update config dictionary
@@ -279,7 +279,7 @@ class SettingsDialog(QDialog):
 
         # Save to file
         config.save_config(self.current_config)
-        QMessageBox.information(self, "Success", "Settings have been saved.")
+        QMessageBox.information(self, "Επιτυχία", "Οι ρυθμίσεις έχουν αποθηκευτεί.")
         self.accept()
 
 if __name__ == '__main__':
@@ -293,4 +293,3 @@ if __name__ == '__main__':
     else:
         print("Settings dialog cancelled.")
     sys.exit()
-
