@@ -173,6 +173,20 @@ class ScanWorker(QObject):
 
     @Slot(str)
     def delete_file(self, path):
+        # In single_split mode, also delete the generated final files
+        if self.config.get("scanner_mode") == "single_split":
+            scan_dir = os.path.dirname(path)
+            final_dir = os.path.join(scan_dir, 'final')
+            base, ext = os.path.splitext(os.path.basename(path))
+            left_path = os.path.join(final_dir, f"{base}_L{ext}")
+            right_path = os.path.join(final_dir, f"{base}_R{ext}")
+            if os.path.exists(left_path):
+                try: os.remove(left_path)
+                except OSError as e: print(f"Could not delete final file {left_path}: {e}")
+            if os.path.exists(right_path):
+                try: os.remove(right_path)
+                except OSError as e: print(f"Could not delete final file {right_path}: {e}")
+
         max_retries = 5
         retry_delay = 0.1 # seconds
         for i in range(max_retries):
@@ -182,6 +196,7 @@ class ScanWorker(QObject):
                     self.file_operation_complete.emit("delete", path)
                     return
                 else:
+                    # If file doesn't exist, the operation is still "complete"
                     self.file_operation_complete.emit("delete", path)
                     return
             except PermissionError as e:
@@ -363,6 +378,42 @@ class ScanWorker(QObject):
             self.file_operation_complete.emit("split", path)
         except Exception as e:
             self.error.emit(f"Αποτυχία διαχωρισμού εικόνας {os.path.basename(path)}: {e}")
+
+    @Slot(str, dict)
+    def perform_page_split(self, source_path, rects_data):
+        """
+        Non-destructively splits a source image into two pages based on rects_data.
+        Saves the output to a 'final' subdirectory.
+        """
+        try:
+            scan_dir = os.path.dirname(source_path)
+            final_dir = os.path.join(scan_dir, 'final')
+            os.makedirs(final_dir, exist_ok=True)
+
+            base, ext = os.path.splitext(os.path.basename(source_path))
+            left_output_path = os.path.join(final_dir, f"{base}_L{ext}")
+            right_output_path = os.path.join(final_dir, f"{base}_R{ext}")
+
+            with Image.open(source_path) as img:
+                # rects_data is expected to contain QRect objects from the UI
+                left_rect = rects_data['left']
+                right_rect = rects_data['right']
+
+                # The QRect needs to be converted to a tuple for Pillow's crop
+                left_box = (left_rect.x(), left_rect.y(), left_rect.x() + left_rect.width(), left_rect.y() + left_rect.height())
+                right_box = (right_rect.x(), right_rect.y(), right_rect.x() + right_rect.width(), right_rect.y() + right_rect.height())
+
+                left_page = img.crop(left_box)
+                right_page = img.crop(right_box)
+
+                left_page.save(left_output_path)
+                right_page.save(right_output_path)
+
+            # Signal completion, perhaps with the source path to identify which job finished
+            self.file_operation_complete.emit("page_split", source_path)
+        except Exception as e:
+            self.error.emit(f"Αποτυχία διαχωρισμού σελίδων για την εικόνα {os.path.basename(source_path)}: {e}")
+
 
     @Slot(str, QRect)
     def crop_and_save_image(self, path, crop_rect):
