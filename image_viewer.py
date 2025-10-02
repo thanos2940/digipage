@@ -84,6 +84,10 @@ class ImageViewer(QWidget):
     def get_scan_line_progress(self):
         return self._scan_line_progress
 
+    def update_toolbar_position(self):
+        """Public method to trigger a repositioning of the toolbar."""
+        self._update_toolbar_position()
+
     def set_scan_line_progress(self, progress):
         self._scan_line_progress = progress
         self.update()
@@ -110,7 +114,20 @@ class ImageViewer(QWidget):
             self.toolbar_animation.setDuration(200)
             self.toolbar_animation.setEasingCurve(QEasingCurve.OutQuad)
             self.toolbar.hide()
-            
+
+    def _show_toolbar_animated(self):
+        """Shows the toolbar with a fade-in animation."""
+        if self.toolbar:
+            self.toolbar_hide_timer.stop()
+            self._update_toolbar_position()
+            self.toolbar_animation.stop()
+            # Ensure effect and toolbar are visible before starting animation
+            self.toolbar_opacity_effect.setOpacity(self.toolbar_opacity_effect.opacity())
+            self.toolbar.show()
+            self.toolbar_animation.setStartValue(self.toolbar_opacity_effect.opacity())
+            self.toolbar_animation.setEndValue(1.0)
+            self.toolbar_animation.start()
+                    
     def cancel_toolbar_hide(self):
         self.toolbar_hide_timer.stop()
 
@@ -255,13 +272,10 @@ class ImageViewer(QWidget):
     # --- Event Handlers ---
     def enterEvent(self, event):
         if self.toolbar and not self.pixmap.isNull():
-            self.toolbar_hide_timer.stop()
-            self._update_toolbar_position()
-            self.toolbar_animation.stop()
-            self.toolbar_animation.setStartValue(self.toolbar_opacity_effect.opacity())
-            self.toolbar_animation.setEndValue(1.0)
-            self.toolbar.show()
-            self.toolbar_animation.start()
+            # Don't show toolbar if user is actively dragging a UI element
+            is_dragging = self.active_handle is not None and self.active_handle != "pan"
+            if not is_dragging:
+                self._show_toolbar_animated()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -391,6 +405,9 @@ class ImageViewer(QWidget):
             
             if self.active_handle:
                 self.last_mouse_pos = event.pos()
+                # Hide toolbar when starting a drag operation (excluding pan)
+                if self.active_handle != "pan":
+                    self._hide_toolbar_animated()
 
     def mouseMoveEvent(self, event):
         if not self.active_handle:
@@ -436,6 +453,10 @@ class ImageViewer(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # Show toolbar on release if the mouse is in the widget
+            if self.rect().contains(event.pos()):
+                self._show_toolbar_animated()
+
             if self.active_handle == "rotate":
                 if abs(self.rotation_angle) > 0.1: 
                     self.rotation_finished.emit(self.image_path, self.rotation_angle)
@@ -539,8 +560,27 @@ class ImageViewer(QWidget):
         }
 
     def _get_handle_at(self, pos):
+        # Prioritize corners for diagonal resize
         for handle, rect in self.crop_handles.items():
-            if rect.contains(pos): return handle
+            # Inflate corner rects slightly for easier grabbing
+            if rect.adjusted(-4, -4, 4, 4).contains(pos):
+                return handle
+
+        # If no corner was hit, check the edges for horizontal/vertical resize
+        r = self.crop_rect_widget
+        tolerance = 8  # Click tolerance in pixels
+        corner_margin = 15 # Don't detect edge clicks too close to a corner
+
+        on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_bottom = abs(pos.y() - r.bottom()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_left = abs(pos.x() - r.left()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        on_right = abs(pos.x() - r.right()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+
+        if on_top: return "top"
+        if on_bottom: return "bottom"
+        if on_left: return "left"
+        if on_right: return "right"
+
         return None
         
     def _is_at_split_handle(self, pos):
@@ -686,4 +726,3 @@ class ImageViewer(QWidget):
         painter.setFont(font)
         painter.setPen(self.accent_color)
         painter.drawText(QRectF(0, handle_rect.bottom(), self.width(), 20), Qt.AlignCenter, f"{self.rotation_angle:.1f}°")
-

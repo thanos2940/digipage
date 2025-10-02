@@ -2,7 +2,11 @@
     "scan_folder": "C:/Users/user/Desktop/scan",
     "todays_books_folder": "C:/Users/user/Desktop/ΒΙΒΛΙΑ ΗΜΕΡΑΣ",
     "city_paths": {
-        "297": "Z:/ΥΦ Β΄ ΚΟΡΙΝΘΟΥ"
+        "297": "Z:/ΥΦ Β΄ ΚΟΡΙΝΘΟΥ",
+        "201": "Z:/ΥΦ ΝΕΜΕΑΣ",
+        "194": "Z:/ΥΦ Α' ΚΟΡΙΝΘΟΥ",
+        "189": "Z:/ΥΦ ΚΙΑΤΟΥ",
+        "183": "Z:/ΥΦ ΞΥΛΟΚΑΣΤΡΟΥ"
     },
     "lighting_standard_folder": "C:/Users/user/Desktop/Thanos/lighting standard samples",
     "lighting_standard_metrics": {
@@ -10,7 +14,7 @@
     },
     "auto_lighting_correction_enabled": false,
     "auto_color_correction_enabled": false,
-    "auto_sharpening_enabled": false,
+    "auto_sharpening_enabled": true,
     "theme": "Blue",
     "image_load_timeout_ms": 2000,
     "caching_enabled": true

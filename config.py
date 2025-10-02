@@ -19,8 +19,8 @@ DEFAULT_CONFIG = {
     "theme": "Material Dark",
     "image_load_timeout_ms": 4000,
     "caching_enabled": True,
+    "scanner_mode": "dual_scan",
 }
-
 # --- Helper functions for color manipulation ---
 def lighten_color(hex_color, factor=0.1):
     hex_color = hex_color.lstrip('#')
@@ -177,21 +177,22 @@ def generate_stylesheet(theme_name="Material Dark"):
 
         /* --- Floating Toolbar --- */
         QFrame#FloatingToolbar {{
-            background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.15)};
+            background-color: {darken_color(theme['PRIMARY'], 0.65)};
             border: 1px solid {theme['OUTLINE']};
             border-radius: 24px; /* Pill shape */
         }}
         
         QFrame#FloatingToolbar QToolButton {{
             background-color: transparent;
-            color: {theme['ON_SURFACE_VARIANT']};
-            font-size: 14pt;
+            color: rgba(255, 255, 255,1);
+            font-size: 11pt;
             padding: 8px;
-            border-radius: 12px;
+            border-radius: 16px;
         }}
         QFrame#FloatingToolbar QToolButton:hover {{
-            background-color: rgba(255, 255, 255, 0.1);
-            color: {theme['ON_SURFACE']};
+            background-color: rgba(255, 255, 255, 0.2);
+          
+            color: {lighten_color(theme['ON_SURFACE'], 0.1)};
         }}
 
         
@@ -285,4 +286,3 @@ def save_config(config_data):
             json.dump(config_data, f, indent=4, ensure_ascii=False)
     except IOError as e:
         print(f"Error saving config: {e}")
-
