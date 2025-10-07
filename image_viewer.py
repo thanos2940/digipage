@@ -445,13 +445,16 @@ class ImageViewer(QWidget):
                 if not self.active_handle and self.crop_rect_widget.contains(event.pos()):
                     self.active_handle = "move"
             elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                # Prioritize resize handles over moving the whole box
                 self.active_handle = self._get_page_split_handle_at(event.pos())
+
                 if not self.active_handle:
-                    if self.left_rect_widget.contains(event.pos()):
-                        self.active_handle = "left_move"
-                    elif self.right_rect_widget.contains(event.pos()):
+                    # Check for move actions only if no handle was grabbed
+                    if self.right_rect_widget.contains(event.pos()):
                         self.active_handle = "right_move"
-            
+                    elif self.left_rect_widget.contains(event.pos()):
+                        self.active_handle = "left_move"
+
             if self.active_handle:
                 self.last_mouse_pos = event.pos()
 
@@ -729,9 +732,38 @@ class ImageViewer(QWidget):
         return QRectF(handle_x - handle_size/2, slider_y - handle_size/2, handle_size, handle_size)
         
     def _get_page_split_handle_at(self, pos):
+        # Prioritize corners for diagonal resize
         for handle, rect in self.page_split_handles.items():
-            if rect.adjusted(-4, -4, 4, 4).contains(pos):
-                return handle
+            if "top" in handle or "bottom" in handle or "left" in handle or "right" in handle:
+                if rect.adjusted(-4, -4, 4, 4).contains(pos):
+                    return handle
+
+        # If no corner was hit, check the edges for horizontal/vertical resize
+        tolerance = 8  # Click tolerance in pixels
+        corner_margin = 15 # Don't detect edge clicks too close to a corner
+
+        # Check left rectangle borders
+        r = self.left_rect_widget
+        on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_bottom = abs(pos.y() - r.bottom()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_left = abs(pos.x() - r.left()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        on_right = abs(pos.x() - r.right()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        if on_top: return "left_top"
+        if on_bottom: return "left_bottom"
+        if on_left: return "left_left"
+        if on_right: return "left_right"
+
+        # Check right rectangle borders
+        r = self.right_rect_widget
+        on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_bottom = abs(pos.y() - r.bottom()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_left = abs(pos.x() - r.left()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        on_right = abs(pos.x() - r.right()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        if on_top: return "right_top"
+        if on_bottom: return "right_bottom"
+        if on_left: return "right_left"
+        if on_right: return "right_right"
+
         return None
 
     def _move_page_split_handle(self, handle, delta):
@@ -750,24 +782,22 @@ class ImageViewer(QWidget):
             rect_to_modify.translate(dx, dy)
         else:
             # Handle resizing
-            if "left" in handle: rect_to_modify.setLeft(rect_to_modify.left() + delta.x())
-            if "right" in handle: rect_to_modify.setRight(rect_to_modify.right() + delta.x())
-            if "top" in handle: rect_to_modify.setTop(rect_to_modify.top() + delta.y())
-            if "bottom" in handle: rect_to_modify.setBottom(rect_to_modify.bottom() + delta.y())
-
-            # Ensure rects don't go outside the image bounds
-            rect_to_modify.setLeft(max(rect_to_modify.left(), pixmap_rect.left()))
-            rect_to_modify.setRight(min(rect_to_modify.right(), pixmap_rect.right()))
-            rect_to_modify.setTop(max(rect_to_modify.top(), pixmap_rect.top()))
-            rect_to_modify.setBottom(min(rect_to_modify.bottom(), pixmap_rect.bottom()))
-
-            # Prevent rect from becoming inverted or too small
-            if rect_to_modify.width() < 20:
-                if "left" in handle: rect_to_modify.setLeft(rect_to_modify.right() - 20)
-                else: rect_to_modify.setRight(rect_to_modify.left() + 20)
-            if rect_to_modify.height() < 20:
-                if "top" in handle: rect_to_modify.setTop(rect_to_modify.bottom() - 20)
-                else: rect_to_modify.setBottom(rect_to_modify.top() + 20)
+            if "left" in handle:
+                new_pos = max(rect_to_modify.left() + delta.x(), pixmap_rect.left())
+                if rect_to_modify.right() - new_pos >= 20:
+                    rect_to_modify.setLeft(new_pos)
+            if "right" in handle:
+                new_pos = min(rect_to_modify.right() + delta.x(), pixmap_rect.right())
+                if new_pos - rect_to_modify.left() >= 20:
+                    rect_to_modify.setRight(new_pos)
+            if "top" in handle:
+                new_pos = max(rect_to_modify.top() + delta.y(), pixmap_rect.top())
+                if rect_to_modify.bottom() - new_pos >= 20:
+                    rect_to_modify.setTop(new_pos)
+            if "bottom" in handle:
+                new_pos = min(rect_to_modify.bottom() + delta.y(), pixmap_rect.bottom())
+                if new_pos - rect_to_modify.top() >= 20:
+                    rect_to_modify.setBottom(new_pos)
 
         self._update_page_split_handles()
 
