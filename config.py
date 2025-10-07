@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     "theme": "Material Dark",
     "image_load_timeout_ms": 4000,
     "caching_enabled": True,
+    "scanner_mode": "dual_scan",
 }
 
 # --- Helper functions for color manipulation ---
