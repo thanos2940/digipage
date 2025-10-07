@@ -54,9 +54,7 @@ class SingleSplitModeWidget(QWidget):
         main_layout.addWidget(self.viewer)
         main_layout.addWidget(toolbar)
 
-        # --- Connections ---
-        self.viewer.load_requested.connect(self.main_window.image_processor.request_image_load)
-        self.main_window.image_processor.image_loaded.connect(self.viewer.on_image_loaded)
+        # --- Connections (to be handled by MainWindow)---
         self.viewer.layout_changed.connect(self.on_layout_changed)
         self.update_button.clicked.connect(self.on_update_clicked)
 

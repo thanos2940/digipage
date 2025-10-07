@@ -441,8 +441,8 @@ class MainWindow(QMainWindow):
         self.image_processor.processing_complete.connect(self.on_processing_complete)
         self.image_processor.error.connect(self.show_error)
 
-        # Viewer-specific signals, only for dual_scan mode
-        if self.viewer1 and self.viewer2:
+        # Mode-specific signal connections
+        if isinstance(self.current_ui_mode, DualScanModeWidget):
             self.image_processor.image_loaded.connect(self.viewer1['viewer'].on_image_loaded)
             self.image_processor.image_loaded.connect(self.viewer2['viewer'].on_image_loaded)
 
@@ -459,6 +459,14 @@ class MainWindow(QMainWindow):
             self.viewer2['viewer'].crop_adjustment_started.connect(self.on_editing_started)
             self.viewer1['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
             self.viewer2['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
+
+        elif isinstance(self.current_ui_mode, SingleSplitModeWidget):
+            # Connect the single viewer to the image processor
+            self.image_processor.image_loaded.connect(self.current_ui_mode.viewer.on_image_loaded)
+            self.current_ui_mode.viewer.load_requested.connect(self.image_processor.request_image_load)
+
+            # Connect editing signal to main window state
+            self.current_ui_mode.viewer.crop_adjustment_started.connect(self.on_editing_started)
 
         # Watcher signals
         if self.watcher:
