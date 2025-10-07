@@ -11,6 +11,7 @@ class InteractionMode:
     SPLITTING = 2
     PANNING = 3
     ROTATING = 4
+    PAGE_SPLITTING = 5
 
 class ImageViewer(QWidget):
     """
@@ -21,6 +22,7 @@ class ImageViewer(QWidget):
     crop_adjustment_started = Signal()
     zoom_state_changed = Signal(bool)
     rotation_finished = Signal(str, float)
+    layout_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,6 +53,12 @@ class ImageViewer(QWidget):
         self.is_dragging_rotate_handle = False
         self.rotation_on_press = 0.0
         self.drag_start_pos = QPoint()
+
+        # Page Splitting state
+        self.left_rect_widget = QRectF()
+        self.right_rect_widget = QRectF()
+        self.page_split_handles = {}
+        self._pending_layout_ratios = None
 
         # Animation properties
         self._scan_line_progress = 0.0
@@ -142,6 +150,12 @@ class ImageViewer(QWidget):
         self.reset_view()
 
         if not self.pixmap.isNull():
+            if self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                if self._pending_layout_ratios:
+                    self.set_layout_ratios(self._pending_layout_ratios)
+                    self._pending_layout_ratios = None
+                else:
+                    self._initialize_default_layout()
             self._start_scan_line_animation()
     
     # --- View and State Management ---
@@ -149,7 +163,7 @@ class ImageViewer(QWidget):
         self.is_zoomed = False
         self.pan_offset = QPointF()
         
-        if self.interaction_mode not in [InteractionMode.SPLITTING, InteractionMode.ROTATING]:
+        if self.interaction_mode not in [InteractionMode.SPLITTING, InteractionMode.ROTATING, InteractionMode.PAGE_SPLITTING]:
             self.interaction_mode = InteractionMode.CROPPING
 
         fit_zoom = 1.0
@@ -164,6 +178,10 @@ class ImageViewer(QWidget):
             self._update_crop_handles()
         else:
             self.crop_rect_widget = QRect()
+
+        if self.interaction_mode != InteractionMode.PAGE_SPLITTING:
+            self.left_rect_widget = QRectF()
+            self.right_rect_widget = QRectF()
     
         self.update()
 
@@ -227,6 +245,80 @@ class ImageViewer(QWidget):
         if self.pixmap.isNull(): return None
         return int(self.split_line_x_ratio * self.pixmap.width())
 
+    def set_page_splitting_mode(self, enabled):
+        if enabled:
+            self.interaction_mode = InteractionMode.PAGE_SPLITTING
+            self.is_zoomed = False
+            self.zoom_state_changed.emit(False)
+            self.reset_view()
+
+            if not self.pixmap.isNull():
+                if self._pending_layout_ratios:
+                    self.set_layout_ratios(self._pending_layout_ratios)
+                    self._pending_layout_ratios = None
+                else:
+                    self._initialize_default_layout()
+        else:
+            self.interaction_mode = InteractionMode.CROPPING
+            self.reset_view()
+        self.update()
+
+    def set_layout_ratios(self, layout_data):
+        """
+        Sets the position of the two page-splitting rectangles based on
+        relative coordinates (ratios of the image dimensions).
+        """
+        if self.pixmap.isNull():
+            self._pending_layout_ratios = layout_data
+            return
+
+        pixmap_rect = self._get_pixmap_rect_in_widget()
+        if pixmap_rect.isEmpty() or not layout_data:
+            self._initialize_default_layout()
+            return
+
+        left_ratios = layout_data['left']
+        right_ratios = layout_data['right']
+
+        self.left_rect_widget = QRectF(
+            pixmap_rect.x() + pixmap_rect.width() * left_ratios['x'],
+            pixmap_rect.y() + pixmap_rect.height() * left_ratios['y'],
+            pixmap_rect.width() * left_ratios['w'],
+            pixmap_rect.height() * left_ratios['h']
+        )
+        self.right_rect_widget = QRectF(
+            pixmap_rect.x() + pixmap_rect.width() * right_ratios['x'],
+            pixmap_rect.y() + pixmap_rect.height() * right_ratios['y'],
+            pixmap_rect.width() * right_ratios['w'],
+            pixmap_rect.height() * right_ratios['h']
+        )
+        self._update_page_split_handles()
+        self.update()
+
+    def get_layout_ratios(self):
+        """
+        Returns the relative positions (ratios) of the page-splitting
+        rectangles, suitable for saving to JSON.
+        """
+        pixmap_rect = self._get_pixmap_rect_in_widget()
+        if pixmap_rect.isEmpty() or self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty():
+            return None
+
+        def get_ratios(widget_rect):
+            if pixmap_rect.width() == 0 or pixmap_rect.height() == 0:
+                return {'x': 0, 'y': 0, 'w': 0, 'h': 0}
+            return {
+                'x': (widget_rect.x() - pixmap_rect.x()) / pixmap_rect.width(),
+                'y': (widget_rect.y() - pixmap_rect.y()) / pixmap_rect.height(),
+                'w': widget_rect.width() / pixmap_rect.width(),
+                'h': widget_rect.height() / pixmap_rect.height(),
+            }
+
+        return {
+            'left': get_ratios(self.left_rect_widget),
+            'right': get_ratios(self.right_rect_widget)
+        }
+
     # --- Event Handlers ---
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -271,6 +363,8 @@ class ImageViewer(QWidget):
                     self._draw_splitting_ui(painter, pixmap_rect_unrotated)
                 elif self.interaction_mode == InteractionMode.CROPPING:
                     self._draw_cropping_ui(painter, pixmap_rect_unrotated)
+                elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                    self._draw_page_splitting_ui(painter, pixmap_rect_unrotated)
 
         if self.scan_line_animation.state() == QPropertyAnimation.Running:
             self._draw_border_animation(painter, pixmap_rect_unrotated)
@@ -345,6 +439,13 @@ class ImageViewer(QWidget):
                 self.active_handle = self._get_handle_at(event.pos())
                 if not self.active_handle and self.crop_rect_widget.contains(event.pos()):
                     self.active_handle = "move"
+            elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                self.active_handle = self._get_page_split_handle_at(event.pos())
+                if not self.active_handle:
+                    if self.left_rect_widget.contains(event.pos()):
+                        self.active_handle = "left_move"
+                    elif self.right_rect_widget.contains(event.pos()):
+                        self.active_handle = "right_move"
             
             if self.active_handle:
                 self.last_mouse_pos = event.pos()
@@ -363,6 +464,16 @@ class ImageViewer(QWidget):
                     elif handle in ["top_right", "bottom_left"]: cursor = Qt.SizeBDiagCursor
                     elif handle in ["top", "bottom"]: cursor = Qt.SizeVerCursor
                     elif handle in ["left", "right"]: cursor = Qt.SizeHorCursor
+                elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                    handle = self._get_page_split_handle_at(event.pos())
+                    if handle:
+                        if "top_left" in handle or "bottom_right" in handle: cursor = Qt.SizeFDiagCursor
+                        elif "top_right" in handle or "bottom_left" in handle: cursor = Qt.SizeBDiagCursor
+                        elif "top" in handle or "bottom" in handle: cursor = Qt.SizeVerCursor
+                        elif "left" in handle or "right" in handle: cursor = Qt.SizeHorCursor
+                    elif self.left_rect_widget.contains(event.pos()) or self.right_rect_widget.contains(event.pos()):
+                        cursor = Qt.SizeAllCursor
+
             self.setCursor(cursor)
             return
 
@@ -387,6 +498,10 @@ class ImageViewer(QWidget):
         elif self.active_handle in self.crop_handles.keys() or self.active_handle == "move":
             self.crop_adjustment_started.emit()
             self._move_crop_handle(delta)
+        elif self.active_handle and ('left_' in self.active_handle or 'right_' in self.active_handle):
+            self.crop_adjustment_started.emit()
+            self.layout_changed.emit()
+            self._move_page_split_handle(self.active_handle, delta)
         
         self.last_mouse_pos = event.pos()
         self.update()
@@ -398,10 +513,48 @@ class ImageViewer(QWidget):
                     self.rotation_finished.emit(self.image_path, self.rotation_angle)
                 self.is_dragging_rotate_handle = False
 
+            if self.active_handle and ('left_' in self.active_handle or 'right_' in self.active_handle):
+                 self.layout_changed.emit()
+
             self.active_handle = None
             self.is_dragging_split_line = False
 
     # --- Private Helper Methods ---
+    def _initialize_default_layout(self):
+        pixmap_rect = self._get_pixmap_rect_in_widget()
+        if pixmap_rect.isEmpty():
+            return
+
+        rect_h = pixmap_rect.height() * 0.95
+        rect_y = pixmap_rect.y() + (pixmap_rect.height() - rect_h) / 2
+
+        left_w = pixmap_rect.width() * 0.46
+        left_x = pixmap_rect.x() + pixmap_rect.width() * 0.02
+
+        right_w = pixmap_rect.width() * 0.46
+        right_x = pixmap_rect.x() + pixmap_rect.width() * (1.0 - 0.46 - 0.02)
+
+        self.left_rect_widget = QRectF(left_x, rect_y, left_w, rect_h)
+        self.right_rect_widget = QRectF(right_x, rect_y, right_w, rect_h)
+
+        self._update_page_split_handles()
+        self.update()
+
+    def _update_page_split_handles(self):
+        s = 10
+        s2 = s // 2
+        self.page_split_handles = {}
+
+        for prefix, r in [('left', self.left_rect_widget), ('right', self.right_rect_widget)]:
+            self.page_split_handles[f'{prefix}_top_left'] = QRectF(r.left() - s2, r.top() - s2, s, s)
+            self.page_split_handles[f'{prefix}_top_right'] = QRectF(r.right() - s2, r.top() - s2, s, s)
+            self.page_split_handles[f'{prefix}_bottom_left'] = QRectF(r.left() - s2, r.bottom() - s2, s, s)
+            self.page_split_handles[f'{prefix}_bottom_right'] = QRectF(r.right() - s2, r.bottom() - s2, s, s)
+            self.page_split_handles[f'{prefix}_top'] = QRectF(r.center().x() - s2, r.top() - s2, s, s)
+            self.page_split_handles[f'{prefix}_bottom'] = QRectF(r.center().x() - s2, r.bottom() - s2, s, s)
+            self.page_split_handles[f'{prefix}_left'] = QRectF(r.left() - s2, r.center().y() - s2, s, s)
+            self.page_split_handles[f'{prefix}_right'] = QRectF(r.right() - s2, r.center().y() - s2, s, s)
+
     def _calculate_rotation_zoom(self):
         """Calculates the zoom factor needed to fill the viewport during rotation."""
         if self.pixmap.isNull() or self.rotation_angle == 0:
@@ -570,6 +723,49 @@ class ImageViewer(QWidget):
         handle_size = 24
         return QRectF(handle_x - handle_size/2, slider_y - handle_size/2, handle_size, handle_size)
         
+    def _get_page_split_handle_at(self, pos):
+        for handle, rect in self.page_split_handles.items():
+            if rect.adjusted(-4, -4, 4, 4).contains(pos):
+                return handle
+        return None
+
+    def _move_page_split_handle(self, handle, delta):
+        pixmap_rect = self._get_pixmap_rect_in_widget()
+
+        # Determine which rectangle we're working on
+        rect_to_modify = self.left_rect_widget if 'left_' in handle else self.right_rect_widget
+
+        if '_move' in handle:
+            dx, dy = delta.x(), delta.y()
+            # Clamp movement within pixmap boundaries
+            if dx < 0: dx = max(dx, pixmap_rect.left() - rect_to_modify.left())
+            if dx > 0: dx = min(dx, pixmap_rect.right() - rect_to_modify.right())
+            if dy < 0: dy = max(dy, pixmap_rect.top() - rect_to_modify.top())
+            if dy > 0: dy = min(dy, pixmap_rect.bottom() - rect_to_modify.bottom())
+            rect_to_modify.translate(dx, dy)
+        else:
+            # Handle resizing
+            if "left" in handle: rect_to_modify.setLeft(rect_to_modify.left() + delta.x())
+            if "right" in handle: rect_to_modify.setRight(rect_to_modify.right() + delta.x())
+            if "top" in handle: rect_to_modify.setTop(rect_to_modify.top() + delta.y())
+            if "bottom" in handle: rect_to_modify.setBottom(rect_to_modify.bottom() + delta.y())
+
+            # Ensure rects don't go outside the image bounds
+            rect_to_modify.setLeft(max(rect_to_modify.left(), pixmap_rect.left()))
+            rect_to_modify.setRight(min(rect_to_modify.right(), pixmap_rect.right()))
+            rect_to_modify.setTop(max(rect_to_modify.top(), pixmap_rect.top()))
+            rect_to_modify.setBottom(min(rect_to_modify.bottom(), pixmap_rect.bottom()))
+
+            # Prevent rect from becoming inverted or too small
+            if rect_to_modify.width() < 20:
+                if "left" in handle: rect_to_modify.setLeft(rect_to_modify.right() - 20)
+                else: rect_to_modify.setRight(rect_to_modify.left() + 20)
+            if rect_to_modify.height() < 20:
+                if "top" in handle: rect_to_modify.setTop(rect_to_modify.bottom() - 20)
+                else: rect_to_modify.setBottom(rect_to_modify.top() + 20)
+
+        self._update_page_split_handles()
+
     # --- Drawing Methods ---
     def _draw_loading_animation(self, painter):
         side = min(self.width(), self.height())
@@ -604,6 +800,34 @@ class ImageViewer(QWidget):
         painter.setBrush(self.accent_color)
         for rect in self.crop_handles.values():
             painter.drawRect(rect)
+
+    def _draw_page_splitting_ui(self, painter, pixmap_rect):
+        if self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty():
+            return
+
+        # Create a path that covers everything *except* the two selection rectangles
+        full_path = QPainterPath()
+        full_path.addRect(QRectF(self.rect()))
+
+        selection_path = QPainterPath()
+        selection_path.addRect(self.left_rect_widget)
+        selection_path.addRect(self.right_rect_widget)
+
+        overlay_path = full_path.subtracted(selection_path)
+        painter.fillPath(overlay_path, QBrush(QColor(0, 0, 0, 100)))
+
+        # Draw borders for the rectangles
+        painter.setPen(QPen(QColor("#4CAF50"), 2)) # Green for left
+        painter.drawRect(self.left_rect_widget)
+
+        painter.setPen(QPen(QColor("#F44336"), 2)) # Red for right
+        painter.drawRect(self.right_rect_widget)
+
+        # Draw all handles
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.accent_color)
+        for handle_rect in self.page_split_handles.values():
+            painter.drawRect(handle_rect)
 
     def _draw_splitting_ui(self, painter, pixmap_rect):
         split_x = pixmap_rect.left() + pixmap_rect.width() * self.split_line_x_ratio

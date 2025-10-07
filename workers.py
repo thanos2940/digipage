@@ -461,6 +461,49 @@ class ScanWorker(QObject):
         except Exception as e:
             self.error.emit(f"Αποτυχία αντικατάστασης ζεύγους: {e}")
 
+    @Slot(str, dict)
+    def perform_page_split(self, source_path, layout_data):
+        """
+        Crops two pages from a single source image based on layout data and
+        saves them to a 'final' subdirectory without modifying the original.
+        """
+        try:
+            scan_folder = os.path.dirname(source_path)
+            final_folder = os.path.join(scan_folder, 'final')
+            os.makedirs(final_folder, exist_ok=True)
+
+            with Image.open(source_path) as img:
+                w, h = img.size
+
+                # --- Convert layout ratios to absolute pixel coordinates ---
+                def get_abs_rect(ratios):
+                    x = int(ratios['x'] * w)
+                    y = int(ratios['y'] * h)
+                    width = int(ratios['w'] * w)
+                    height = int(ratios['h'] * h)
+                    return (x, y, x + width, y + height)
+
+                left_box = get_abs_rect(layout_data['left'])
+                right_box = get_abs_rect(layout_data['right'])
+
+                left_page = img.crop(left_box)
+                right_page = img.crop(right_box)
+
+                # --- Construct output filenames ---
+                base, ext = os.path.splitext(os.path.basename(source_path))
+                left_out_path = os.path.join(final_folder, f"{base}_L{ext}")
+                right_out_path = os.path.join(final_folder, f"{base}_R{ext}")
+
+                # --- Save the cropped pages ---
+                left_page.save(left_out_path)
+                right_page.save(right_out_path)
+
+            # Signal completion (can be used to refresh UI if needed)
+            self.file_operation_complete.emit("page_split", source_path)
+
+        except Exception as e:
+            self.error.emit(f"Αποτυχία διαχωρισμού σελίδων για την εικόνα {os.path.basename(source_path)}: {e}")
+
 
 class NewImageHandler(FileSystemEventHandler):
     def __init__(self, callback, general_change_callback):

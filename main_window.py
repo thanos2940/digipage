@@ -173,6 +173,16 @@ class MainWindow(QMainWindow):
         dialog = LogViewerDialog(self)
         dialog.exec()
 
+    def get_current_theme(self):
+        """Returns the dictionary for the currently configured theme."""
+        theme_name = self.app_config.get("theme", "Material Dark")
+        return config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+
+    @Slot(str, dict)
+    def perform_page_split(self, source_path, layout_data):
+        """A passthrough method to call the page split worker."""
+        self.scan_worker.perform_page_split(source_path, layout_data)
+
     def initial_load(self):
         self.trigger_full_refresh()
 
@@ -474,19 +484,19 @@ class MainWindow(QMainWindow):
     @Slot(list)
     def on_initial_scan_complete(self, files):
         self.image_files = files
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
         
-        # If this scan was triggered by a split operation, jump to the new pair
+        # If this scan was triggered by a split operation (dual scan mode only)
         if hasattr(self, '_split_op_index') and self._split_op_index is not None:
-            # The split operation is complete. We now jump the view to the new pair.
-            # The first image of the new pair is at the index of the original image that was split.
             self.current_index = self._split_op_index
-            self.current_index = max(0, self.current_index) # Ensure we don't go below zero.
-            self._split_op_index = None # Reset the flag for the next operation.
+            self.current_index = max(0, self.current_index)
+            self._split_op_index = None
         else:
             # Original logic for jumping to the end on a regular refresh.
             if self.current_index + 1 >= len(self.image_files) and len(self.image_files) > 0:
-                self.current_index = max(0, len(self.image_files) - 2)
-        
+                step = 1 if scanner_mode == "single_split" else 2
+                self.current_index = max(0, len(self.image_files) - step)
+
         force_reload = getattr(self, '_force_reload_on_next_scan', False)
         self.update_display(force_reload=force_reload)
         self._force_reload_on_next_scan = False
@@ -542,22 +552,31 @@ class MainWindow(QMainWindow):
             self.image_files.append(path)
             self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
             
-            # --- Performance Tracking ---
+            # --- Performance Tracking & Stats ---
             self.scan_timestamps.append(time.time())
             self.update_scan_speed()
             self.pending_card.set_value(str(len(self.image_files)))
             self.update_total_pages()
-            # --------------------------
             
-            auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
-            auto_color = self.app_config.get("auto_color_correction_enabled", False)
-            if auto_light or auto_color:
-                QTimer.singleShot(500, lambda p=path: self.image_processor.auto_process_image(p, auto_light, auto_color))
+            # --- Mode-Specific Auto-Processing ---
+            scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+            if scanner_mode == "single_split":
+                # In this mode, we auto-split the page using the last layout
+                layout = self.current_ui_mode.get_layout_for_image(path)
+                if layout:
+                    self.perform_page_split(path, layout)
+            else:
+                # Standard auto-correction for dual-scan
+                auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
+                auto_color = self.app_config.get("auto_color_correction_enabled", False)
+                if auto_light or auto_color:
+                    QTimer.singleShot(500, lambda p=path: self.image_processor.auto_process_image(p, auto_light, auto_color))
 
+            # --- UI Navigation ---
             if not self.is_actively_editing:
                 self.update_timer.start()
             
-            self._check_and_update_jump_button_animation() # Always check
+            self._check_and_update_jump_button_animation()
 
     @Slot(str)
     def show_error(self, message):
@@ -569,24 +588,47 @@ class MainWindow(QMainWindow):
 
     def update_display(self, force_reload=False):
         total = len(self.image_files)
-        path1_exists = self.current_index < len(self.image_files)
-        path2_exists = (self.current_index + 1) < len(self.image_files)
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
 
-        page1_num = self.current_index + 1 if path1_exists else 0
-        page2_num = self.current_index + 2 if path2_exists else 0
+        path1_exists = self.current_index < total
 
-        status_text = f"Σελίδες {page1_num}-{page2_num} από {total}" if path2_exists else f"Σελίδα {page1_num} από {total}"
-        if not path1_exists: status_text = "Δεν βρέθηκαν εικόνες."
-        self.status_label.setText(status_text)
+        if not path1_exists:
+            self.status_label.setText("Δεν βρέθηκαν εικόνες.")
+            if self.current_ui_mode and hasattr(self.current_ui_mode, 'load_image'):
+                self.current_ui_mode.load_image(None) # Clear the viewer
+            elif self.viewer1 and self.viewer2:
+                self.viewer1['viewer'].request_image_load(None, force_reload=force_reload)
+                self.viewer2['viewer'].request_image_load(None, force_reload=force_reload)
+            return
+
+        # Update status label and button states
+        page1_num = self.current_index + 1
+        if scanner_mode == "dual_scan":
+            path2_exists = (self.current_index + 1) < total
+            page2_num = self.current_index + 2 if path2_exists else 0
+            status_text = f"Σελίδες {page1_num}-{page2_num} από {total}" if path2_exists else f"Σελίδα {page1_num} από {total}"
+        else: # single_split
+            status_text = f"Εικόνα {page1_num} από {total}"
         
+        self.status_label.setText(status_text)
         self.prev_btn.setEnabled(self.current_index > 0)
-        self.next_btn.setEnabled(self.current_index + 2 < len(self.image_files))
+        self.next_btn.setEnabled(self.current_index + step < len(self.image_files))
         self._check_and_update_jump_button_animation()
 
-        # Viewer-specific logic only for dual_scan mode
-        if self.viewer1 and self.viewer2:
+        # Update the UI mode's display
+        if scanner_mode == "single_split":
+            path = self.image_files[self.current_index]
+            self.current_ui_mode.load_image(path)
+
+            # Since the layout is based on the *previous* image, we fetch that.
+            layout = self.current_ui_mode.get_layout_for_image(path)
+            if layout:
+                self.current_ui_mode.viewer.set_layout_ratios(layout)
+
+        elif scanner_mode == "dual_scan":
             path1 = self.image_files[self.current_index] if path1_exists else None
-            path2 = self.image_files[self.current_index + 1] if path2_exists else None
+            path2 = self.image_files[self.current_index + 1] if (self.current_index + 1) < total else None
 
             self.viewer1['viewer'].request_image_load(path1, force_reload=force_reload)
             self.viewer2['viewer'].request_image_load(path2, force_reload=force_reload)
@@ -618,22 +660,34 @@ class MainWindow(QMainWindow):
 
     def next_pair(self):
         if self.is_actively_editing or self.replace_mode_active: return
-        if self.current_index + 2 < len(self.image_files):
-            self.current_index += 2
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
+        if self.current_index + step < len(self.image_files):
+            self.current_index += step
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def prev_pair(self):
         if self.is_actively_editing or self.replace_mode_active: return
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
         if self.current_index > 0:
-            self.current_index -= 2
+            self.current_index -= step
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def jump_to_end(self):
         if self.replace_mode_active: return
         if not self.image_files: return
-        new_index = len(self.image_files) - 2 if len(self.image_files) >= 2 else 0
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
+        new_index = len(self.image_files) - step if len(self.image_files) >= step else 0
         self.current_index = max(0, new_index)
         self.update_display()
         self.is_actively_editing = False # Jumping to end is a navigation action
@@ -792,9 +846,10 @@ class MainWindow(QMainWindow):
     def on_file_operation_complete(self, operation_type, message_or_path):
         """Handles the UI updates after a file operation from the worker is complete."""
         self.is_actively_editing = False  # Reset editing state after any operation
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
 
-        # Viewer-specific updates only for dual_scan mode
-        if self.viewer1 and self.viewer2:
+        # --- Dual Scan Mode Specific Updates ---
+        if scanner_mode == "dual_scan" and isinstance(self.current_ui_mode, DualScanModeWidget):
             if operation_type in ["crop", "color_fix", "restore", "rotate"]:
                 path = message_or_path
                 if self.viewer1['viewer'].image_path == path:
@@ -815,7 +870,16 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("Ανανέωση λίστας αρχείων...")
                 self.trigger_full_refresh(force_reload_viewers=True)
 
-        # General updates applicable to all modes
+        # --- Single Split Mode Specific Updates ---
+        elif scanner_mode == "single_split":
+            if operation_type == "page_split":
+                # This operation is non-destructive and happens in the background.
+                # The UI already shows the source image, so no refresh is needed.
+                # We can provide some feedback to the user in the status bar.
+                self.statusBar().showMessage(f"Επεξεργασία ολοκληρώθηκε για: {os.path.basename(message_or_path)}", 4000)
+
+
+        # --- General updates applicable to all modes ---
         if operation_type == "transfer_all":
             if hasattr(self, 'transfer_progress_dialog'):
                 self.transfer_progress_dialog.close()

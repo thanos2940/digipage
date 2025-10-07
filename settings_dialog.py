@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QDialog, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QListWidget, QFileDialog, QMessageBox,
-    QCheckBox, QDialogButtonBox, QFormLayout, QListWidgetItem
+    QCheckBox, QDialogButtonBox, QFormLayout, QListWidgetItem, QGroupBox, QRadioButton
 )
 from PySide6.QtCore import Qt
 
@@ -68,6 +68,18 @@ class SettingsDialog(QDialog):
         self.caching_checkbox = QCheckBox("Ενεργοποίηση Προσωρινής Αποθήκευσης Εικόνων για Απόδοση")
         self.caching_checkbox.setToolTip("Όταν είναι ενεργοποιημένη, οι εικόνες διατηρούνται στη μνήμη για ταχύτερη επαναφόρτωση. Απενεργοποιήστε για δοκιμές ή για εξοικονόμηση μνήμης RAM.")
         layout.addRow(self.caching_checkbox)
+
+        # --- Scanner Mode ---
+        scanner_mode_group = QGroupBox("Τύπος Scanner / Λειτουργία")
+        scanner_mode_layout = QVBoxLayout()
+        self.dual_scan_radio = QRadioButton("Dual Scan (Δύο εικόνες, μία για κάθε σελίδα)")
+        self.dual_scan_radio.setToolTip("Η προεπιλεγμένη λειτουργία για standard scanners που παράγουν μία εικόνα ανά σελίδα.")
+        self.single_split_radio = QRadioButton("Single-Shot Split (Μία εικόνα για ένα πλήρες άνοιγμα βιβλίου)")
+        self.single_split_radio.setToolTip("Λειτουργία για ειδικούς scanners που καταγράφουν και τις δύο σελίδες σε μία πλατιά εικόνα.")
+        scanner_mode_layout.addWidget(self.dual_scan_radio)
+        scanner_mode_layout.addWidget(self.single_split_radio)
+        scanner_mode_group.setLayout(scanner_mode_layout)
+        layout.addRow(scanner_mode_group)
 
 
         # --- City Data Paths ---
@@ -164,6 +176,12 @@ class SettingsDialog(QDialog):
         self.today_folder_edit.setText(self.current_config.get("todays_books_folder", ""))
         self.ref_folder_edit.setText(self.current_config.get("lighting_standard_folder", ""))
         self.caching_checkbox.setChecked(self.current_config.get("caching_enabled", True))
+
+        scanner_mode = self.current_config.get("scanner_mode", "dual_scan")
+        if scanner_mode == "single_split":
+            self.single_split_radio.setChecked(True)
+        else:
+            self.dual_scan_radio.setChecked(True)
 
         self.auto_lighting_checkbox.setChecked(self.current_config.get("auto_lighting_correction_enabled", False))
         self.auto_color_checkbox.setChecked(self.current_config.get("auto_color_correction_enabled", False))
@@ -275,6 +293,12 @@ class SettingsDialog(QDialog):
         self.current_config["auto_lighting_correction_enabled"] = self.auto_lighting_checkbox.isChecked()
         self.current_config["auto_color_correction_enabled"] = self.auto_color_checkbox.isChecked()
         self.current_config["auto_sharpening_enabled"] = self.auto_sharpen_checkbox.isChecked()
+
+        if self.single_split_radio.isChecked():
+            self.current_config["scanner_mode"] = "single_split"
+        else:
+            self.current_config["scanner_mode"] = "dual_scan"
+
         # Theme is already updated in apply_theme
 
         # Save to file
