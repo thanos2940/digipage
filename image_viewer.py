@@ -1,8 +1,8 @@
 import sys
 import os
 import math
-from PySide6.QtWidgets import QWidget, QApplication, QPushButton, QVBoxLayout, QFrame, QGraphicsOpacityEffect
-from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient, QTransform
+from PySide6.QtWidgets import QWidget, QApplication, QPushButton, QVBoxLayout, QFrame
+from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, Signal, Slot, QPropertyAnimation, QEasingCurve, QRectF, QPointF, QTimer, Property, QEvent
 
 class InteractionMode:
@@ -58,16 +58,6 @@ class ImageViewer(QWidget):
         self.is_loading = False
         self.loading_animation_angle = 0
         
-        # --- Floating Toolbar ---
-        self.toolbar = None
-        self.toolbar_animation = None
-        self.toolbar_opacity_effect = None
-        self.toolbar_hide_timer = QTimer(self)
-        self.toolbar_hide_timer.setSingleShot(True)
-        self.toolbar_hide_timer.setInterval(100) # 100ms delay before hiding
-        self.toolbar_hide_timer.timeout.connect(self._hide_toolbar_animated)
-
-
         self.scan_line_animation = QPropertyAnimation(self, b"scan_line_progress", self)
         self.scan_line_animation.setDuration(800)
         self.scan_line_animation.setEasingCurve(QEasingCurve.InOutCubic)
@@ -101,19 +91,6 @@ class ImageViewer(QWidget):
     zoom_level = Property(float, get_zoom_level, set_zoom_level)
     
     # --- Public Methods ---
-    def set_toolbar(self, toolbar):
-        self.toolbar = toolbar
-        if self.toolbar:
-            self.toolbar_opacity_effect = QGraphicsOpacityEffect(self.toolbar)
-            self.toolbar.setGraphicsEffect(self.toolbar_opacity_effect)
-            self.toolbar_animation = QPropertyAnimation(self.toolbar_opacity_effect, b"opacity")
-            self.toolbar_animation.setDuration(200)
-            self.toolbar_animation.setEasingCurve(QEasingCurve.OutQuad)
-            self.toolbar.hide()
-            
-    def cancel_toolbar_hide(self):
-        self.toolbar_hide_timer.stop()
-
     def set_theme_colors(self, primary_hex, tertiary_hex):
         self.accent_color = QColor(primary_hex)
         self.tertiary_color = QColor(tertiary_hex)
@@ -127,8 +104,6 @@ class ImageViewer(QWidget):
         self.pixmap = QPixmap()
         self.display_pixmap = QPixmap()
         self.update()
-        if self.toolbar:
-            self.toolbar.hide()
 
     def request_image_load(self, path, force_reload=False, show_loading_animation=True):
         if self.image_path == path and not self.pixmap.isNull() and not force_reload:
@@ -253,22 +228,6 @@ class ImageViewer(QWidget):
         return int(self.split_line_x_ratio * self.pixmap.width())
 
     # --- Event Handlers ---
-    def enterEvent(self, event):
-        if self.toolbar and not self.pixmap.isNull():
-            self.toolbar_hide_timer.stop()
-            self._update_toolbar_position()
-            self.toolbar_animation.stop()
-            self.toolbar_animation.setStartValue(self.toolbar_opacity_effect.opacity())
-            self.toolbar_animation.setEndValue(1.0)
-            self.toolbar.show()
-            self.toolbar_animation.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if self.toolbar:
-            self.toolbar_hide_timer.start()
-        super().leaveEvent(event)
-
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -319,8 +278,6 @@ class ImageViewer(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.reset_view()
-        if self.toolbar and self.toolbar.isVisible():
-            self._update_toolbar_position()
 
     def wheelEvent(self, event):
         if self.pixmap.isNull() or self.interaction_mode in [InteractionMode.SPLITTING, InteractionMode.ROTATING]:
@@ -445,19 +402,6 @@ class ImageViewer(QWidget):
             self.is_dragging_split_line = False
 
     # --- Private Helper Methods ---
-    def _hide_toolbar_animated(self):
-        if self.toolbar:
-            self.toolbar_animation.stop()
-            self.toolbar_animation.setStartValue(self.toolbar_opacity_effect.opacity())
-            self.toolbar_animation.setEndValue(0.0)
-            self.toolbar_animation.start()
-            
-    def _update_toolbar_position(self):
-        if self.toolbar:
-            x = (self.width() - self.toolbar.width()) / 2
-            y = self.height() - self.toolbar.height() - 15
-            self.toolbar.move(int(x), int(y))
-
     def _calculate_rotation_zoom(self):
         """Calculates the zoom factor needed to fill the viewport during rotation."""
         if self.pixmap.isNull() or self.rotation_angle == 0:
@@ -539,8 +483,27 @@ class ImageViewer(QWidget):
         }
 
     def _get_handle_at(self, pos):
+        # Prioritize corners for diagonal resize
         for handle, rect in self.crop_handles.items():
-            if rect.contains(pos): return handle
+            # Inflate corner rects slightly for easier grabbing
+            if rect.adjusted(-4, -4, 4, 4).contains(pos):
+                return handle
+
+        # If no corner was hit, check the edges for horizontal/vertical resize
+        r = self.crop_rect_widget
+        tolerance = 8  # Click tolerance in pixels
+        corner_margin = 15 # Don't detect edge clicks too close to a corner
+
+        on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_bottom = abs(pos.y() - r.bottom()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
+        on_left = abs(pos.x() - r.left()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+        on_right = abs(pos.x() - r.right()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
+
+        if on_top: return "top"
+        if on_bottom: return "bottom"
+        if on_left: return "left"
+        if on_right: return "right"
+
         return None
         
     def _is_at_split_handle(self, pos):
@@ -599,7 +562,7 @@ class ImageViewer(QWidget):
     def _get_rotation_handle_rect(self):
         slider_width = self.width() * 0.6
         slider_x = (self.width() - slider_width) / 2
-        slider_y = self.height() - 150 # Position relative to widget bottom
+        slider_y = self.height() - 70 # Position relative to widget bottom
 
         handle_pos_ratio = (self.rotation_angle + 45) / 90.0
         handle_x = slider_x + slider_width * handle_pos_ratio
@@ -669,7 +632,7 @@ class ImageViewer(QWidget):
         slider_width = self.width() * 0.6
         slider_height = 4 
         slider_x = (self.width() - slider_width) / 2
-        slider_y = self.height() - 150 # Adjusted position for taller toolbar
+        slider_y = self.height() - 70 # Adjusted position for static toolbar
         
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(self.tertiary_color).lighter(120))
@@ -686,4 +649,3 @@ class ImageViewer(QWidget):
         painter.setFont(font)
         painter.setPen(self.accent_color)
         painter.drawText(QRectF(0, handle_rect.bottom(), self.width(), 20), Qt.AlignCenter, f"{self.rotation_angle:.1f}°")
-

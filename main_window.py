@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QFrame, QMessageBox, QDialog, QToolButton, QSpacerItem, QSizePolicy, QApplication,
     QProgressDialog, QProgressBar, QStackedWidget
 )
-from PySide6.QtCore import Qt, QThread, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QThread, Slot, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QColor
 
 import config
@@ -122,84 +122,6 @@ class StatsCardWidget(QWidget):
     def set_value(self, value_text):
         self.value_label.setText(str(value_text))
 
-class HoverAwareToolbar(QFrame):
-    def __init__(self, viewer, parent=None):
-        super().__init__(parent)
-        self.viewer = viewer
-        self.setMouseTracking(True)
-
-    def enterEvent(self, event):
-        if self.viewer:
-            self.viewer.cancel_toolbar_hide()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if self.viewer:
-            self.viewer.leaveEvent(event)
-        super().leaveEvent(event)
-
-class ExpandingButton(QToolButton):
-    """A QToolButton that expands on hover to show full text and collapses to an icon."""
-    def __init__(self, icon_text, full_text, parent=None):
-        super().__init__(parent)
-        self._icon_text = icon_text
-        self._full_text = full_text
-        self.setToolTip(full_text)
-
-        # Temporarily set full text to calculate expanded width from sizeHint
-        self.setText(self._full_text)
-        self.expanded_width = self.sizeHint().width()
-
-        # Set icon text to calculate collapsed width
-        self.setText(self._icon_text)
-        self.collapsed_width = self.sizeHint().width()
-
-        # Set initial state
-        self.setMinimumWidth(self.collapsed_width)
-        
-        # Setup the animation for the width property
-        self.animation = QPropertyAnimation(self, b"minimumWidth")
-        self.animation.setDuration(150)
-        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
-
-    def enterEvent(self, event):
-        """When the mouse enters, expand the button to show the full text."""
-        self.setText(self._full_text)
-        self.animation.stop()
-        self.animation.setStartValue(self.width())
-        self.animation.setEndValue(self.expanded_width)
-        self.animation.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        """When the mouse leaves, collapse the button back to the icon text."""
-        self.animation.stop()
-        self.animation.setStartValue(self.width())
-        self.animation.setEndValue(self.collapsed_width)
-        
-        # Disconnect any previous connection to be safe
-        try:
-            self.animation.finished.disconnect(self._on_collapse_finished)
-        except (TypeError, RuntimeError):
-            pass # Fails silently if not connected
-            
-        # Once the animation finishes, revert to the icon text
-        self.animation.finished.connect(self._on_collapse_finished)
-        self.animation.start()
-        super().leaveEvent(event)
-
-    @Slot()
-    def _on_collapse_finished(self):
-        """Slot to revert the button text after the collapse animation is done."""
-        # Check if the mouse is still outside the button before changing the text
-        if not self.underMouse():
-            self.setText(self._icon_text)
-        
-        # Disconnect self to prevent this slot from being called again
-        try:
-            self.animation.finished.disconnect(self._on_collapse_finished)
-        except (TypeError, RuntimeError):
-            pass
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -287,7 +209,8 @@ class MainWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName("ViewerFrame")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0,0,0,0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
         viewer = ImageViewer()
         viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -297,86 +220,82 @@ class MainWindow(QMainWindow):
         tertiary_color = theme_data.get("TERTIARY", "#e2bada")
         viewer.set_theme_colors(primary_color, tertiary_color)
         
-        layout.addWidget(viewer, 1)
+        layout.addWidget(viewer)
 
-        # --- Floating Toolbar (Multi-Pill) ---
-        toolbar_container = HoverAwareToolbar(viewer, frame)
-        toolbar_container.setObjectName("ToolbarContainer")
-        toolbar_container.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        container_layout = QHBoxLayout(toolbar_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(8) # Space between pills
-
-        # Pill 1: Editing Tools
-        tools_pill = QFrame(toolbar_container)
-        tools_pill.setObjectName("FloatingToolbar")
-        tools_layout = QHBoxLayout(tools_pill)
-        tools_layout.setContentsMargins(4, 2, 4, 2)
-        tools_layout.setSpacing(4)
-
-        # Pill 2: Destructive/Restorative Actions
-        actions_pill = QFrame(toolbar_container)
-        actions_pill.setObjectName("FloatingToolbar")
-        actions_layout = QHBoxLayout(actions_pill)
-        actions_layout.setContentsMargins(4, 2, 4, 2)
-        actions_layout.setSpacing(4)
-        
-        # Pill 3: Confirmation controls for split/rotate modes
-        confirmation_pill = QFrame(toolbar_container)
-        confirmation_pill.setObjectName("FloatingToolbar")
-        confirmation_layout = QHBoxLayout(confirmation_pill)
-        confirmation_layout.setContentsMargins(8, 0, 8, 0)
-        confirmation_layout.setSpacing(5)
-
-        container_layout.addWidget(confirmation_pill)
-        container_layout.addWidget(tools_pill)
-        container_layout.addWidget(actions_pill)
+        # --- Static Toolbar ---
+        toolbar = QFrame(frame)
+        toolbar.setObjectName("StaticToolbar")
+        toolbar.setFixedHeight(55)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(10, 5, 10, 5)
+        toolbar_layout.setSpacing(10)
 
         controls = {}
         
-        # --- Create All Controls ---
-        # Mode Indicator
-        controls['mode_label'] = QLabel()
-        controls['mode_label'].setObjectName("ModeIndicatorLabel")
+        # --- Control Stack for Different Modes ---
+        controls_stack = QStackedWidget()
+        toolbar_layout.addWidget(controls_stack)
 
-        # Editing Tools (Pill 1)
-        controls['split'] = ExpandingButton("✂️", "Διαχωρισμός", tools_pill)
-        controls['rotate'] = ExpandingButton("🔄", "Περιστροφή", tools_pill)
-        controls['fix_color'] = ExpandingButton("🎨", "Διόρθωση", tools_pill)
-        controls['crop'] = ExpandingButton("✅", "Περικοπή", tools_pill)
-        controls['crop'].setObjectName("crop_button")
-
-        # Actions (Pill 2)
-        controls['restore'] = ExpandingButton("⏪", "Επαναφορά", actions_pill)
-        controls['delete'] = ExpandingButton("🗑️", "Διαγραφή", actions_pill)
-        controls['delete'].setObjectName("delete_button")
+        # --- PAGE 0: NORMAL CONTROLS ---
+        normal_controls_page = QWidget()
+        normal_layout = QHBoxLayout(normal_controls_page)
+        normal_layout.setContentsMargins(0, 0, 0, 0)
+        normal_layout.setSpacing(10)
         
-        # Confirmation Controls (Pill 3)
+        controls['crop'] = QToolButton(); controls['crop'].setText("Περικοπή"); controls['crop'].setToolTip("Εφαρμογή Περικοπής"); controls['crop'].setObjectName("crop_button")
+        controls['split'] = QToolButton(); controls['split'].setText("Διαχωρισμός"); controls['split'].setToolTip("Διαχωρισμός")
+        controls['rotate'] = QToolButton(); controls['rotate'].setText("Περιστροφή"); controls['rotate'].setToolTip("Περιστροφή")
+        controls['fix_color'] = QToolButton(); controls['fix_color'].setText("Χρώμα"); controls['fix_color'].setToolTip("Διόρθωση Χρώματος")
+        controls['restore'] = QToolButton(); controls['restore'].setText("Επαναφορά"); controls['restore'].setToolTip("Επαναφορά"); controls['restore'].setObjectName("restore_button")
+        controls['delete'] = QToolButton(); controls['delete'].setText("Διαγραφή"); controls['delete'].setToolTip("Διαγραφή"); controls['delete'].setObjectName("delete_button")
+
+        normal_layout.addStretch()
+        normal_layout.addWidget(controls['crop'])
+        normal_layout.addWidget(controls['split'])
+        normal_layout.addWidget(controls['rotate'])
+        normal_layout.addWidget(controls['fix_color'])
+        normal_layout.addWidget(controls['restore'])
+        normal_layout.addWidget(controls['delete'])
+        normal_layout.addStretch()
+        controls_stack.addWidget(normal_controls_page)
+
+        # --- PAGE 1: SPLIT CONTROLS ---
+        split_controls_page = QWidget()
+        split_layout = QHBoxLayout(split_controls_page)
+        split_layout.setContentsMargins(0, 0, 0, 0)
+        split_layout.setSpacing(10)
+
+        controls['split_mode_label'] = QLabel("ΔΙΑΧΩΡΙΣΜΟΣ")
         controls['confirm_split'] = QPushButton("Επιβεβαίωση"); controls['confirm_split'].setProperty("class", "success filled")
         controls['cancel_split'] = QPushButton("Άκυρο"); controls['cancel_split'].setProperty("class", "destructive")
+
+        split_layout.addStretch()
+        split_layout.addWidget(controls['split_mode_label'])
+        split_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Fixed, QSizePolicy.Minimum))
+        split_layout.addWidget(controls['confirm_split'])
+        split_layout.addWidget(controls['cancel_split'])
+        split_layout.addStretch()
+        controls_stack.addWidget(split_controls_page)
+        
+        # --- PAGE 2: ROTATE CONTROLS ---
+        rotate_controls_page = QWidget()
+        rotate_layout = QHBoxLayout(rotate_controls_page)
+        rotate_layout.setContentsMargins(0, 0, 0, 0)
+        rotate_layout.setSpacing(10)
+
+        controls['rotate_mode_label'] = QLabel("ΠΕΡΙΣΤΡΟΦΗ")
         controls['cancel_rotate'] = QPushButton("Τέλος"); controls['cancel_rotate'].setProperty("class", "destructive")
 
-        # Add controls to their respective pills
-        tools_layout.addWidget(controls['split'])
-        tools_layout.addWidget(controls['rotate'])
-        tools_layout.addWidget(controls['fix_color'])
-        tools_layout.addWidget(controls['crop'])
+        rotate_layout.addStretch()
+        rotate_layout.addWidget(controls['rotate_mode_label'])
+        rotate_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Fixed, QSizePolicy.Minimum))
+        rotate_layout.addWidget(controls['cancel_rotate'])
+        rotate_layout.addStretch()
+        controls_stack.addWidget(rotate_controls_page)
         
-        actions_layout.addWidget(controls['restore'])
-        actions_layout.addWidget(controls['delete'])
-        
-        confirmation_layout.addWidget(controls['mode_label'])
-        confirmation_layout.addWidget(controls['confirm_split'])
-        confirmation_layout.addWidget(controls['cancel_split'])
-        confirmation_layout.addWidget(controls['cancel_rotate'])
+        layout.addWidget(toolbar)
 
-        viewer.set_toolbar(toolbar_container)
-
-        panel_widgets = {
-            'frame': frame, 'viewer': viewer, 'toolbar_container': toolbar_container, 
-            'tools_pill': tools_pill, 'actions_pill': actions_pill, 'confirmation_pill': confirmation_pill, 
-            **controls
-        }
+        panel_widgets = {'frame': frame, 'viewer': viewer, 'toolbar': toolbar, 'controls_stack': controls_stack, **controls}
         
         # Connect signals
         controls['crop'].clicked.connect(lambda: self.apply_crop(panel_widgets))
@@ -390,27 +309,10 @@ class MainWindow(QMainWindow):
         controls['cancel_rotate'].clicked.connect(lambda: self.toggle_rotate_mode(panel_widgets, False))
 
         # Initial state
-        self._set_toolbar_mode(panel_widgets, 'normal')
+        controls_stack.setCurrentIndex(0)
+        toolbar.setEnabled(False) # Start disabled until an image is loaded
 
         return panel_widgets
-
-    def toggle_split_mode(self, viewer_panel, enable):
-        viewer = viewer_panel['viewer']
-        viewer.set_splitting_mode(enable)
-        self.is_actively_editing = enable
-        self._set_toolbar_mode(viewer_panel, 'split' if enable else 'normal')
-
-        if not enable:
-            self._check_and_update_jump_button_animation()
-
-    def toggle_rotate_mode(self, viewer_panel, enable):
-        viewer = viewer_panel['viewer']
-        viewer.set_rotating_mode(enable)
-        self.is_actively_editing = enable
-        self._set_toolbar_mode(viewer_panel, 'rotate' if enable else 'normal')
-
-        if not enable:
-            self._check_and_update_jump_button_animation()
 
     def create_sidebar(self):
         sidebar_dock = QDockWidget("Χειριστήρια & Στατιστικά", self)
@@ -496,31 +398,6 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.RightDockWidgetArea, sidebar_dock)
 
-    def _set_toolbar_mode(self, panel_widgets, mode):
-        """Controls the visibility of toolbar pills based on the interaction mode."""
-        # Valid modes: 'normal', 'split', 'rotate'
-        is_normal = (mode == 'normal')
-        is_split = (mode == 'split')
-        is_rotate = (mode == 'rotate')
-
-        # Toggle visibility of the main pills vs the confirmation pill
-        panel_widgets['tools_pill'].setVisible(is_normal)
-        panel_widgets['actions_pill'].setVisible(is_normal)
-        panel_widgets['confirmation_pill'].setVisible(not is_normal)
-        
-        if is_split:
-            panel_widgets['mode_label'].setText("ΔΙΑΧΩΡΙΣΜΟΣ")
-            panel_widgets['confirm_split'].setVisible(True)
-            panel_widgets['cancel_split'].setVisible(True)
-            panel_widgets['cancel_rotate'].setVisible(False)
-        elif is_rotate:
-            panel_widgets['mode_label'].setText("ΠΕΡΙΣΤΡΟΦΗ")
-            panel_widgets['confirm_split'].setVisible(False)
-            panel_widgets['cancel_split'].setVisible(False)
-            panel_widgets['cancel_rotate'].setVisible(True)
-        
-        # Ask the container to resize to fit the new visible content
-        panel_widgets['toolbar_container'].adjustSize()
 
     def create_bottom_bar(self, main_layout):
         bottom_bar = QFrame()
@@ -762,12 +639,19 @@ class MainWindow(QMainWindow):
     def show_error(self, message):
         QMessageBox.critical(self, "Σφάλμα Εργασιών", message)
 
+    # def _update_viewer_ui_state(self, viewer_panel):
+    #     has_image = viewer_panel['viewer'].image_path is not None
+    #     viewer_panel['toolbar'].setVisible(has_image)
+
     def update_display(self, force_reload=False):
         path1 = self.image_files[self.current_index] if self.current_index < len(self.image_files) else None
         path2 = self.image_files[self.current_index + 1] if (self.current_index + 1) < len(self.image_files) else None
 
         self.viewer1['viewer'].request_image_load(path1, force_reload=force_reload)
         self.viewer2['viewer'].request_image_load(path2, force_reload=force_reload)
+        
+        self.viewer1['toolbar'].setEnabled(path1 is not None)
+        self.viewer2['toolbar'].setEnabled(path2 is not None)
 
         total = len(self.image_files)
         page1_num = self.current_index + 1 if path1 else 0
@@ -874,6 +758,7 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             # Proactively clear UI and cache before telling worker to delete
             viewer_panel['viewer'].clear_image()
+            viewer_panel['toolbar'].setEnabled(False)
             self.image_processor.clear_cache_for_paths([image_path])
             self.scan_worker.delete_file(image_path)
 
@@ -890,7 +775,9 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             # Proactively clear UI and cache
             self.viewer1['viewer'].clear_image()
+            self.viewer1['toolbar'].setEnabled(False)
             self.viewer2['viewer'].clear_image()
+            self.viewer2['toolbar'].setEnabled(False)
             self.image_processor.clear_cache_for_paths(paths_to_delete)
             for path in paths_to_delete:
                 self.scan_worker.delete_file(path)
@@ -1014,7 +901,27 @@ class MainWindow(QMainWindow):
             self.image_processor.clear_cache_for_paths([viewer.image_path])
             self.scan_worker.correct_color_and_save(viewer.image_path)
 
-    
+    def toggle_split_mode(self, viewer_panel, enable):
+        viewer = viewer_panel['viewer']
+        viewer.set_splitting_mode(enable)
+        self.is_actively_editing = enable
+
+        if enable:
+            viewer_panel['controls_stack'].setCurrentIndex(1)
+        else:
+            viewer_panel['controls_stack'].setCurrentIndex(0)
+            self._check_and_update_jump_button_animation()
+
+    def toggle_rotate_mode(self, viewer_panel, enable):
+        viewer = viewer_panel['viewer']
+        viewer.set_rotating_mode(enable)
+        self.is_actively_editing = enable
+
+        if enable:
+            viewer_panel['controls_stack'].setCurrentIndex(2)
+        else:
+            viewer_panel['controls_stack'].setCurrentIndex(0)
+            self._check_and_update_jump_button_animation()
 
     def apply_split(self, viewer_panel):
         viewer = viewer_panel['viewer']
@@ -1130,4 +1037,3 @@ class MainWindow(QMainWindow):
         self.jump_end_btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: none;")
 
         self.jump_button_animation_step = (self.jump_button_animation_step + 1) % 41
-

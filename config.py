@@ -174,31 +174,42 @@ def generate_stylesheet(theme_name="Material Dark"):
         QPushButton[class~="success"]:hover {{
             background-color: {lighten_color(theme['SUCCESS'], 0.1)};
         }}
-
-        /* --- Floating Toolbar --- */
-        QFrame#FloatingToolbar {{
-            background-color: {darken_color(theme['SURFACE_CONTAINER'], 0.15)};
-            border: 1px solid {theme['OUTLINE']};
-            border-radius: 24px; /* Pill shape */
-        }}
         
-        QFrame#FloatingToolbar QToolButton {{
-            background-color: transparent;
-            color: {theme['ON_SURFACE_VARIANT']};
-            font-size: 14pt;
-            padding: 8px;
-            border-radius: 12px;
+        /* --- Static Toolbar --- */
+        QFrame#StaticToolbar {{
+            background-color: {theme['FRAME_BG']};
+            border-top: 1px solid {theme['OUTLINE']};
+            border-radius: 0px;
         }}
-        QFrame#FloatingToolbar QToolButton:hover {{
-            background-color: rgba(255, 255, 255, 0.1);
-            color: {theme['ON_SURFACE']};
+        QFrame#StaticToolbar QToolButton {{
+            background-color: {theme['SURFACE_CONTAINER']};
+            color: {lighten_color(theme['PRIMARY'], 0.2)};
+            padding: 6px 12px;
+            border-radius: 14px;
+            font-size: 11pt;
+        }}
+        QFrame#StaticToolbar QToolButton:hover {{
+            background-color: {lighten_color(theme['SURFACE_CONTAINER'], 0.1)};
         }}
 
-        
-        
-        /* Specific overrides for icon buttons */
-        QToolButton#crop_button {{ color: {theme['SUCCESS']}; }}
-        QToolButton#delete_button {{ color: {theme['DESTRUCTIVE']}; }}
+        /* Colored toolbar buttons use background color for emphasis */
+        QToolButton#crop_button {{
+            background-color: {theme['SUCCESS']};
+            color: {theme['ON_SUCCESS']};
+        }}
+        QToolButton#crop_button:hover {{ background-color: {lighten_color(theme['SUCCESS'], 0.1)}; }}
+
+        QToolButton#delete_button {{
+            background-color: {theme['DESTRUCTIVE']};
+            color: {theme['ON_DESTRUCTIVE']};
+        }}
+        QToolButton#delete_button:hover {{ background-color: {lighten_color(theme['DESTRUCTIVE'], 0.1)}; }}
+
+        QToolButton#restore_button {{
+            background-color: {theme['WARNING']};
+            color: {theme['ON_WARNING']};
+        }}
+        QToolButton#restore_button:hover {{ background-color: {lighten_color(theme['WARNING'], 0.1)}; }}
 
 
         /* --- LineEdits --- */
@@ -285,4 +296,3 @@ def save_config(config_data):
             json.dump(config_data, f, indent=4, ensure_ascii=False)
     except IOError as e:
         print(f"Error saving config: {e}")
-
