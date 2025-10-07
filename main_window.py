@@ -392,21 +392,16 @@ class MainWindow(QMainWindow):
     def wheelEvent(self, event):
         if self.is_actively_editing: return
 
-        # This navigation is only applicable in dual scan mode where viewers are present
-        if not self.viewer1 or not self.viewer2:
-            return
+        # For dual scan mode, we only navigate if the mouse is not over a zoomed viewer
+        if isinstance(self.current_ui_mode, DualScanModeWidget):
+            if self.viewer1['viewer'].underMouse() or self.viewer2['viewer'].underMouse():
+                if self.viewer1['viewer'].is_zoomed or self.viewer2['viewer'].is_zoomed:
+                    return # Don't navigate with wheel when over a zoomed image
 
-        if self.viewer1['viewer'].underMouse() or self.viewer2['viewer'].underMouse():
-            if not self.viewer1['viewer'].is_zoomed and not self.viewer2['viewer'].is_zoomed:
-                if event.angleDelta().y() > 0:
-                    self.prev_pair()
-                else:
-                    self.next_pair()
+        if event.angleDelta().y() > 0:
+            self.prev_pair()
         else:
-            if event.angleDelta().y() > 0:
-                self.prev_pair()
-            else:
-                self.next_pair()
+            self.next_pair()
 
     def setup_workers(self):
         self.scan_worker_thread = QThread()
@@ -763,6 +758,22 @@ class MainWindow(QMainWindow):
     def delete_current_pair(self):
         if self.replace_mode_active: return
 
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+
+        if scanner_mode == "single_split":
+            if self.current_index < len(self.image_files):
+                path_to_delete = self.image_files[self.current_index]
+                reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
+                                             f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα;\n\n{os.path.basename(path_to_delete)}",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.current_ui_mode.viewer.clear_image()
+                    self.image_processor.clear_cache_for_paths([path_to_delete])
+                    self.scan_worker.delete_file(path_to_delete)
+                    # After deletion, trigger a refresh to update the file list and view
+                    self.trigger_full_refresh(force_reload_viewers=True)
+            return
+
         # This action is only applicable in dual scan mode where viewers are present
         if not self.viewer1 or not self.viewer2:
             return
@@ -1030,7 +1041,10 @@ class MainWindow(QMainWindow):
         event.accept()
         
     def _check_and_update_jump_button_animation(self):
-        has_unseen_images = self.current_index + 2 < len(self.image_files)
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+        has_unseen_images = self.current_index + step < len(self.image_files)
+
         if has_unseen_images:
             if not self.jump_button_animation.isActive():
                 self.jump_button_animation_step = 0

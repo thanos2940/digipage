@@ -147,14 +147,19 @@ class ImageViewer(QWidget):
         self.image_path = path 
         self._loading_path = None 
         self.rotation_angle = 0
+
+        # Store pending layout before it's potentially cleared by reset_view or other methods.
+        pending_layout = self._pending_layout_ratios
+        self._pending_layout_ratios = None
+
         self.reset_view()
 
         if not self.pixmap.isNull():
             if self.interaction_mode == InteractionMode.PAGE_SPLITTING:
-                if self._pending_layout_ratios:
-                    self.set_layout_ratios(self._pending_layout_ratios)
-                    self._pending_layout_ratios = None
+                if pending_layout:
+                    self.set_layout_ratios(pending_layout)
                 else:
+                    # This case can happen if it's the very first image
                     self._initialize_default_layout()
             self._start_scan_line_animation()
     
@@ -809,11 +814,15 @@ class ImageViewer(QWidget):
         full_path = QPainterPath()
         full_path.addRect(QRectF(self.rect()))
 
-        selection_path = QPainterPath()
-        selection_path.addRect(self.left_rect_widget)
-        selection_path.addRect(self.right_rect_widget)
+        # Create a single unified path for both selection rectangles to handle overlaps correctly
+        left_path = QPainterPath()
+        left_path.addRect(self.left_rect_widget)
+        right_path = QPainterPath()
+        right_path.addRect(self.right_rect_widget)
 
-        overlay_path = full_path.subtracted(selection_path)
+        united_selection_path = left_path.united(right_path)
+
+        overlay_path = full_path.subtracted(united_selection_path)
         painter.fillPath(overlay_path, QBrush(QColor(0, 0, 0, 100)))
 
         # Draw borders for the rectangles
