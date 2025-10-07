@@ -504,6 +504,37 @@ class ScanWorker(QObject):
         except Exception as e:
             self.error.emit(f"Αποτυχία διαχωρισμού σελίδων για την εικόνα {os.path.basename(source_path)}: {e}")
 
+    @Slot(str)
+    def delete_split_image_and_artifacts(self, source_path):
+        """
+        Deletes a source image, its cropped artifacts (_L.jpg, _R.jpg),
+        and its backup.
+        """
+        try:
+            # Delete the main source image
+            if os.path.exists(source_path):
+                os.remove(source_path)
+
+            # Construct paths for artifacts
+            scan_folder = os.path.dirname(source_path)
+            base, ext = os.path.splitext(os.path.basename(source_path))
+            final_folder = os.path.join(scan_folder, 'final')
+            left_out_path = os.path.join(final_folder, f"{base}_L{ext}")
+            right_out_path = os.path.join(final_folder, f"{base}_R{ext}")
+            backup_path = os.path.join(config.BACKUP_DIR, os.path.basename(source_path))
+
+            # Delete artifacts if they exist
+            if os.path.exists(left_out_path):
+                os.remove(left_out_path)
+            if os.path.exists(right_out_path):
+                os.remove(right_out_path)
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+
+            self.file_operation_complete.emit("delete", source_path)
+        except Exception as e:
+            self.error.emit(f"Αποτυχία διαγραφής εικόνας και των παραγώγων της {os.path.basename(source_path)}: {e}")
+
 
 class NewImageHandler(FileSystemEventHandler):
     def __init__(self, callback, general_change_callback):

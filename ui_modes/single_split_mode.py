@@ -139,6 +139,23 @@ class SingleSplitModeWidget(QWidget):
         except IOError as e:
             self.main_window.show_error(f"Could not save layout data: {e}")
 
+    def remove_layout_data(self, image_path):
+        """Removes the layout data for a specific image filename."""
+        if not self._layout_data_path:
+             scan_folder = os.path.dirname(image_path)
+             self._layout_data_path = os.path.join(scan_folder, 'layout_data.json')
+
+        all_data = self._load_all_layout_data()
+        image_filename = os.path.basename(image_path)
+
+        if image_filename in all_data:
+            del all_data[image_filename]
+            try:
+                with open(self._layout_data_path, 'w', encoding='utf-8') as f:
+                    json.dump(all_data, f, indent=4)
+            except IOError as e:
+                self.main_window.show_error(f"Could not update layout data after deletion: {e}")
+
     def _load_all_layout_data(self):
         """Loads the entire layout data file, returning {} if it doesn't exist."""
         if self._layout_data_path and os.path.exists(self._layout_data_path):

@@ -567,6 +567,8 @@ class MainWindow(QMainWindow):
                 # In this mode, we auto-split the page using the last layout
                 layout = self.current_ui_mode.get_layout_for_image(path)
                 if layout:
+                    # Immediately save the inherited layout for the new image
+                    self.current_ui_mode.save_layout_data(path, layout)
                     self.perform_page_split(path, layout)
             else:
                 # Standard auto-correction for dual-scan
@@ -756,7 +758,8 @@ class MainWindow(QMainWindow):
             self.scan_worker.delete_file(image_path)
 
     def delete_current_pair(self):
-        if self.replace_mode_active: return
+        if self.replace_mode_active:
+            return
 
         scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
 
@@ -764,24 +767,27 @@ class MainWindow(QMainWindow):
             if self.current_index < len(self.image_files):
                 path_to_delete = self.image_files[self.current_index]
                 reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
-                                             f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα;\n\n{os.path.basename(path_to_delete)}",
+                                             f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα, τα παράγωγά της και την καταχώρηση του layout;\n\n{os.path.basename(path_to_delete)}",
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.Yes:
+                    # Clear UI, cache, layout data, and then delete all related files
                     self.current_ui_mode.viewer.clear_image()
                     self.image_processor.clear_cache_for_paths([path_to_delete])
-                    self.scan_worker.delete_file(path_to_delete)
-                    # After deletion, trigger a refresh to update the file list and view
+                    self.current_ui_mode.remove_layout_data(path_to_delete)
+                    self.scan_worker.delete_split_image_and_artifacts(path_to_delete)
+                    # A full refresh is needed after deletion to update the file list
                     self.trigger_full_refresh(force_reload_viewers=True)
             return
 
-        # This action is only applicable in dual scan mode where viewers are present
+        # Fallback to dual_scan logic
         if not self.viewer1 or not self.viewer2:
             return
 
         path1 = self.viewer1['viewer'].image_path
         path2 = self.viewer2['viewer'].image_path
         paths_to_delete = [p for p in [path1, path2] if p]
-        if not paths_to_delete: return
+        if not paths_to_delete:
+            return
         file_names = "\n".join([os.path.basename(p) for p in paths_to_delete])
         reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
                                      f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτές τις εικόνες;\n\n{file_names}",
