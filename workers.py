@@ -629,7 +629,7 @@ class Watcher(QObject):
 class ImageProcessor(QObject):
     image_loaded = Signal(str, QPixmap)
     processing_complete = Signal(str)
-    thumbnail_loaded = Signal(int, str, QPixmap)
+    thumbnail_loaded = Signal(str, QObject, QPixmap)
     error = Signal(str)
 
     def __init__(self):
@@ -701,6 +701,31 @@ class ImageProcessor(QObject):
             self.image_loaded.emit(path, pixmap)
         except Exception as e:
             self.error.emit(f"Αποτυχία επεξεργασίας εικόνας {path}: {e}")
+
+    @Slot(str, QObject)
+    def request_thumbnail_load(self, path, requester):
+        # This is a simplified version of request_image_load for thumbnails
+        if not path or not os.path.exists(path):
+            self.thumbnail_loaded.emit(path, requester, QPixmap())
+            return
+
+        # Thumbnails are not cached to save memory, they are lightweight.
+        try:
+            img = Image.open(path)
+            img.load()
+            pil_img = img
+
+            if pil_img.mode != "RGBA":
+                pil_img = pil_img.convert("RGBA")
+            q_image = ImageQt(pil_img)
+            pixmap = QPixmap.fromImage(q_image)
+
+            self.thumbnail_loaded.emit(path, requester, pixmap)
+        except Exception as e:
+            # Don't emit a big error for a failed thumbnail, just log it.
+            print(f"Failed to load thumbnail for {path}: {e}")
+            self.thumbnail_loaded.emit(path, requester, QPixmap())
+
 
     @Slot(str, bool, bool)
     def auto_process_image(self, path, apply_lighting, apply_color):

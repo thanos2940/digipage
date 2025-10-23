@@ -20,6 +20,7 @@ from settings_dialog import SettingsDialog
 from log_viewer_dialog import LogViewerDialog
 from ui_modes.dual_scan_mode import DualScanModeWidget
 from ui_modes.single_split_mode import SingleSplitModeWidget
+from image_pair_grid import ImagePairGridWidget
 
 
 # A custom widget for displaying book information in a structured, table-like row.
@@ -314,9 +315,18 @@ class MainWindow(QMainWindow):
         settings_btn.setToolTip("Άνοιγμα του παραθύρου ρυθμίσεων της εφαρμογής.")
         settings_btn.clicked.connect(self.open_settings_dialog)
 
+        # --- Image Pair Navigation Panel ---
+        self.image_pair_grid = ImagePairGridWidget()
+        self.image_pair_grid.setMinimumHeight(200) # Ensure it has some initial size
+
+        pair_nav_group = QGroupBox("Πλοήγηση Ζεύγους")
+        pair_nav_layout = QVBoxLayout(pair_nav_group)
+        pair_nav_layout.addWidget(self.image_pair_grid)
+
         sidebar_layout.addWidget(stats_group)
         sidebar_layout.addWidget(book_group)
         sidebar_layout.addWidget(today_group)
+        sidebar_layout.addWidget(pair_nav_group)
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(settings_btn)
 
@@ -434,7 +444,10 @@ class MainWindow(QMainWindow):
         
         # ImageProcessor signals
         self.image_processor.processing_complete.connect(self.on_processing_complete)
+        self.image_processor.thumbnail_loaded.connect(self.on_thumbnail_loaded)
         self.image_processor.error.connect(self.show_error)
+
+        self.image_pair_grid.load_thumbnail_requested.connect(self.image_processor.request_thumbnail_load)
 
         # Mode-specific signal connections
         if isinstance(self.current_ui_mode, DualScanModeWidget):
@@ -469,6 +482,8 @@ class MainWindow(QMainWindow):
             self.watcher.scan_folder_changed.connect(self.trigger_full_refresh)
             self.watcher.error.connect(self.show_error)
             self.watcher.finished.connect(self.watcher.thread.quit)
+
+        self.image_pair_grid.thumbnail_selected.connect(self.on_thumbnail_selected)
             
     @Slot(bool)
     def on_viewer_zoom_changed(self, is_zoomed):
@@ -506,6 +521,7 @@ class MainWindow(QMainWindow):
         
         self.pending_card.set_value(str(len(self.image_files)))
         self.update_total_pages()
+        self.image_pair_grid.populate_grid(self.image_files)
 
 
     @Slot(dict)
@@ -620,6 +636,7 @@ class MainWindow(QMainWindow):
         self.prev_btn.setEnabled(self.current_index > 0)
         self.next_btn.setEnabled(self.current_index + step < len(self.image_files))
         self._check_and_update_jump_button_animation()
+        self.image_pair_grid.set_current_index(self.current_index)
 
         # Update the UI mode's display
         if scanner_mode == "single_split":
@@ -1078,3 +1095,15 @@ class MainWindow(QMainWindow):
         self.jump_end_btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: none;")
 
         self.jump_button_animation_step = (self.jump_button_animation_step + 1) % 41
+
+    @Slot(int)
+    def on_thumbnail_selected(self, index):
+        if self.is_actively_editing or self.replace_mode_active:
+            return
+        self.current_index = index
+        self.update_display()
+
+    @Slot(str, QObject, QPixmap)
+    def on_thumbnail_loaded(self, path, requester, pixmap):
+        if hasattr(requester, 'set_pixmap'):
+            requester.set_pixmap(pixmap)
