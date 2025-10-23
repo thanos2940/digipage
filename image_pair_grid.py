@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QLabel, QHBoxLayout, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QObject
 from PySide6.QtGui import QPixmap
 
 class ImageThumbnailWidget(QWidget):
@@ -132,7 +132,7 @@ class ImagePairGridWidget(QWidget):
 
     def set_current_index(self, index):
         for i, thumbnail in enumerate(self.thumbnails):
-            is_selected = (i * 2 == index)
+            is_selected = (i == index // 2)
             thumbnail.set_selected(is_selected)
             if is_selected:
                 self.scroll_area.ensureWidgetVisible(thumbnail, 50, 50)
