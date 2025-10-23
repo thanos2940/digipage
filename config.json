@@ -13,5 +13,6 @@
     "auto_sharpening_enabled": false,
     "theme": "Blue",
     "image_load_timeout_ms": 2000,
-    "caching_enabled": true
+    "caching_enabled": true,
+    "scanner_mode": "dual_scan"
 }

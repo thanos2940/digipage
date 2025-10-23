@@ -18,6 +18,8 @@ from image_viewer import ImageViewer, InteractionMode
 from workers import ScanWorker, Watcher, ImageProcessor, natural_sort_key
 from settings_dialog import SettingsDialog
 from log_viewer_dialog import LogViewerDialog
+from ui_modes.dual_scan_mode import DualScanModeWidget
+from ui_modes.single_split_mode import SingleSplitModeWidget
 
 
 # A custom widget for displaying book information in a structured, table-like row.
@@ -137,6 +139,11 @@ class MainWindow(QMainWindow):
         self._split_op_index = None # Track index for post-split navigation
         
         self._initial_load_done = False
+
+        # Pointers to the active viewers, managed by the current UI mode widget
+        self.viewer1 = None
+        self.viewer2 = None
+        self.current_ui_mode = None
         
         # --- Performance Tracking ---
         self.scan_timestamps = deque(maxlen=20) # For calculating rolling speed
@@ -166,6 +173,16 @@ class MainWindow(QMainWindow):
         dialog = LogViewerDialog(self)
         dialog.exec()
 
+    def get_current_theme(self):
+        """Returns the dictionary for the currently configured theme."""
+        theme_name = self.app_config.get("theme", "Material Dark")
+        return config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+
+    @Slot(str, dict)
+    def perform_page_split(self, source_path, layout_data):
+        """A passthrough method to call the page split worker."""
+        self.scan_worker.perform_page_split(source_path, layout_data)
+
     def initial_load(self):
         self.trigger_full_refresh()
 
@@ -177,25 +194,42 @@ class MainWindow(QMainWindow):
         main_v_layout.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(main_container)
 
-        # This widget holds the viewers and is the main area for the dock widget
+        # This widget holds the main UI mode and is the main area for the dock widget
         content_area = QWidget()
-        main_h_layout = QHBoxLayout(content_area)
-        main_h_layout.setSpacing(10)
-        main_h_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout = QHBoxLayout(content_area)
+        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(10, 10, 10, 10)
 
-        viewers_container = QWidget()
-        viewers_layout = QHBoxLayout(viewers_container)
-        viewers_layout.setSpacing(10)
-        viewers_layout.setContentsMargins(0, 0, 0, 0)
+        # --- Main UI Mode Area ---
+        self.ui_mode_stack = QStackedWidget()
+        content_layout.addWidget(self.ui_mode_stack)
 
-        self.viewer1 = self._create_viewer_panel()
-        self.viewer2 = self._create_viewer_panel()
-        viewers_layout.addWidget(self.viewer1['frame'])
-        viewers_layout.addWidget(self.viewer2['frame'])
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+
+        if scanner_mode == "dual_scan":
+            self.current_ui_mode = DualScanModeWidget(self, self.app_config)
+            # Store references to the viewer panels for other parts of the MainWindow to use
+            self.viewer1 = self.current_ui_mode.viewer1
+            self.viewer2 = self.current_ui_mode.viewer2
+            self.ui_mode_stack.addWidget(self.current_ui_mode)
+        elif scanner_mode == "single_split":
+            self.current_ui_mode = SingleSplitModeWidget(self)
+            # This mode does not use the dual viewers, so we set them to None
+            self.viewer1 = None
+            self.viewer2 = None
+            self.ui_mode_stack.addWidget(self.current_ui_mode)
+        else:
+            # Fallback for an unknown mode
+            error_label = QLabel(f"Error: Unknown scanner_mode '{scanner_mode}'")
+            error_label.setAlignment(Qt.AlignCenter)
+            self.ui_mode_stack.addWidget(error_label)
+            self.current_ui_mode = None
+            self.viewer1 = None
+            self.viewer2 = None
+
+        self.ui_mode_stack.setCurrentIndex(0)
         
-        main_h_layout.addWidget(viewers_container)
-        
-        # Add the main content area (viewers) to the vertical layout
+        # Add the main content area to the vertical layout
         main_v_layout.addWidget(content_area)
 
         # Create and add the persistent bottom bar
@@ -203,116 +237,6 @@ class MainWindow(QMainWindow):
         
         # Create and dock the sidebar
         self.create_sidebar()
-
-
-    def _create_viewer_panel(self):
-        frame = QFrame()
-        frame.setObjectName("ViewerFrame")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        viewer = ImageViewer()
-        viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        theme_data = config.THEMES.get(self.app_config.get("theme"), config.THEMES["Material Dark"])
-        primary_color = theme_data.get("PRIMARY", "#b0c6ff")
-        tertiary_color = theme_data.get("TERTIARY", "#e2bada")
-        viewer.set_theme_colors(primary_color, tertiary_color)
-        
-        layout.addWidget(viewer)
-
-        # --- Static Toolbar ---
-        toolbar = QFrame(frame)
-        toolbar.setObjectName("StaticToolbar")
-        toolbar.setFixedHeight(55)
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(10, 5, 10, 5)
-        toolbar_layout.setSpacing(10)
-
-        controls = {}
-        
-        # --- Control Stack for Different Modes ---
-        controls_stack = QStackedWidget()
-        toolbar_layout.addWidget(controls_stack)
-
-        # --- PAGE 0: NORMAL CONTROLS ---
-        normal_controls_page = QWidget()
-        normal_layout = QHBoxLayout(normal_controls_page)
-        normal_layout.setContentsMargins(0, 0, 0, 0)
-        normal_layout.setSpacing(10)
-        
-        controls['crop'] = QToolButton(); controls['crop'].setText("Περικοπή"); controls['crop'].setToolTip("Εφαρμογή Περικοπής"); controls['crop'].setObjectName("crop_button")
-        controls['split'] = QToolButton(); controls['split'].setText("Διαχωρισμός"); controls['split'].setToolTip("Διαχωρισμός")
-        controls['rotate'] = QToolButton(); controls['rotate'].setText("Περιστροφή"); controls['rotate'].setToolTip("Περιστροφή")
-        controls['fix_color'] = QToolButton(); controls['fix_color'].setText("Χρώμα"); controls['fix_color'].setToolTip("Διόρθωση Χρώματος")
-        controls['restore'] = QToolButton(); controls['restore'].setText("Επαναφορά"); controls['restore'].setToolTip("Επαναφορά"); controls['restore'].setObjectName("restore_button")
-        controls['delete'] = QToolButton(); controls['delete'].setText("Διαγραφή"); controls['delete'].setToolTip("Διαγραφή"); controls['delete'].setObjectName("delete_button")
-
-        normal_layout.addStretch()
-        normal_layout.addWidget(controls['crop'])
-        normal_layout.addWidget(controls['split'])
-        normal_layout.addWidget(controls['rotate'])
-        normal_layout.addWidget(controls['fix_color'])
-        normal_layout.addWidget(controls['restore'])
-        normal_layout.addWidget(controls['delete'])
-        normal_layout.addStretch()
-        controls_stack.addWidget(normal_controls_page)
-
-        # --- PAGE 1: SPLIT CONTROLS ---
-        split_controls_page = QWidget()
-        split_layout = QHBoxLayout(split_controls_page)
-        split_layout.setContentsMargins(0, 0, 0, 0)
-        split_layout.setSpacing(10)
-
-        controls['split_mode_label'] = QLabel("ΔΙΑΧΩΡΙΣΜΟΣ")
-        controls['confirm_split'] = QPushButton("Επιβεβαίωση"); controls['confirm_split'].setProperty("class", "success filled")
-        controls['cancel_split'] = QPushButton("Άκυρο"); controls['cancel_split'].setProperty("class", "destructive")
-
-        split_layout.addStretch()
-        split_layout.addWidget(controls['split_mode_label'])
-        split_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Fixed, QSizePolicy.Minimum))
-        split_layout.addWidget(controls['confirm_split'])
-        split_layout.addWidget(controls['cancel_split'])
-        split_layout.addStretch()
-        controls_stack.addWidget(split_controls_page)
-        
-        # --- PAGE 2: ROTATE CONTROLS ---
-        rotate_controls_page = QWidget()
-        rotate_layout = QHBoxLayout(rotate_controls_page)
-        rotate_layout.setContentsMargins(0, 0, 0, 0)
-        rotate_layout.setSpacing(10)
-
-        controls['rotate_mode_label'] = QLabel("ΠΕΡΙΣΤΡΟΦΗ")
-        controls['cancel_rotate'] = QPushButton("Τέλος"); controls['cancel_rotate'].setProperty("class", "destructive")
-
-        rotate_layout.addStretch()
-        rotate_layout.addWidget(controls['rotate_mode_label'])
-        rotate_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Fixed, QSizePolicy.Minimum))
-        rotate_layout.addWidget(controls['cancel_rotate'])
-        rotate_layout.addStretch()
-        controls_stack.addWidget(rotate_controls_page)
-        
-        layout.addWidget(toolbar)
-
-        panel_widgets = {'frame': frame, 'viewer': viewer, 'toolbar': toolbar, 'controls_stack': controls_stack, **controls}
-        
-        # Connect signals
-        controls['crop'].clicked.connect(lambda: self.apply_crop(panel_widgets))
-        controls['fix_color'].clicked.connect(lambda: self.apply_color_fix(panel_widgets))
-        controls['split'].clicked.connect(lambda: self.toggle_split_mode(panel_widgets, True))
-        controls['rotate'].clicked.connect(lambda: self.toggle_rotate_mode(panel_widgets, True))
-        controls['delete'].clicked.connect(lambda: self.delete_single_image(panel_widgets))
-        controls['restore'].clicked.connect(lambda: self.restore_image(panel_widgets))
-        controls['confirm_split'].clicked.connect(lambda: self.apply_split(panel_widgets))
-        controls['cancel_split'].clicked.connect(lambda: self.toggle_split_mode(panel_widgets, False))
-        controls['cancel_rotate'].clicked.connect(lambda: self.toggle_rotate_mode(panel_widgets, False))
-
-        # Initial state
-        controls_stack.setCurrentIndex(0)
-        toolbar.setEnabled(False) # Start disabled until an image is loaded
-
-        return panel_widgets
 
     def create_sidebar(self):
         sidebar_dock = QDockWidget("Χειριστήρια & Στατιστικά", self)
@@ -467,17 +391,17 @@ class MainWindow(QMainWindow):
 
     def wheelEvent(self, event):
         if self.is_actively_editing: return
-        if self.viewer1['viewer'].underMouse() or self.viewer2['viewer'].underMouse():
-            if not self.viewer1['viewer'].is_zoomed and not self.viewer2['viewer'].is_zoomed:
-                if event.angleDelta().y() > 0:
-                    self.prev_pair()
-                else:
-                    self.next_pair()
+
+        # For dual scan mode, we only navigate if the mouse is not over a zoomed viewer
+        if isinstance(self.current_ui_mode, DualScanModeWidget):
+            if self.viewer1['viewer'].underMouse() or self.viewer2['viewer'].underMouse():
+                if self.viewer1['viewer'].is_zoomed or self.viewer2['viewer'].is_zoomed:
+                    return # Don't navigate with wheel when over a zoomed image
+
+        if event.angleDelta().y() > 0:
+            self.prev_pair()
         else:
-            if event.angleDelta().y() > 0:
-                self.prev_pair()
-            else:
-                self.next_pair()
+            self.next_pair()
 
     def setup_workers(self):
         self.scan_worker_thread = QThread()
@@ -507,27 +431,37 @@ class MainWindow(QMainWindow):
         self.scan_worker.file_operation_complete.connect(self.on_file_operation_complete)
         self.scan_worker.book_creation_progress.connect(self.on_book_creation_progress)
         self.scan_worker.transfer_preparation_complete.connect(self.on_transfer_preparation_complete)
-        self.scan_worker.file_operation_complete.connect(self.on_file_operation_complete)
         
         # ImageProcessor signals
-        self.image_processor.image_loaded.connect(self.viewer1['viewer'].on_image_loaded)
-        self.image_processor.image_loaded.connect(self.viewer2['viewer'].on_image_loaded)
         self.image_processor.processing_complete.connect(self.on_processing_complete)
         self.image_processor.error.connect(self.show_error)
 
-        # ImageViewer -> ScanWorker
-        self.viewer1['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
-        self.viewer2['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
+        # Mode-specific signal connections
+        if isinstance(self.current_ui_mode, DualScanModeWidget):
+            self.image_processor.image_loaded.connect(self.viewer1['viewer'].on_image_loaded)
+            self.image_processor.image_loaded.connect(self.viewer2['viewer'].on_image_loaded)
 
-        # ImageViewer -> ImageProcessor
-        self.viewer1['viewer'].load_requested.connect(self.image_processor.request_image_load)
-        self.viewer2['viewer'].load_requested.connect(self.image_processor.request_image_load)
+            # ImageViewer -> ScanWorker
+            self.viewer1['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
+            self.viewer2['viewer'].rotation_finished.connect(self.scan_worker.rotate_crop_and_save)
 
-        # ImageViewer -> MainWindow (for editing state)
-        self.viewer1['viewer'].crop_adjustment_started.connect(self.on_editing_started)
-        self.viewer2['viewer'].crop_adjustment_started.connect(self.on_editing_started)
-        self.viewer1['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
-        self.viewer2['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
+            # ImageViewer -> ImageProcessor
+            self.viewer1['viewer'].load_requested.connect(self.image_processor.request_image_load)
+            self.viewer2['viewer'].load_requested.connect(self.image_processor.request_image_load)
+
+            # ImageViewer -> MainWindow (for editing state)
+            self.viewer1['viewer'].crop_adjustment_started.connect(self.on_editing_started)
+            self.viewer2['viewer'].crop_adjustment_started.connect(self.on_editing_started)
+            self.viewer1['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
+            self.viewer2['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
+
+        elif isinstance(self.current_ui_mode, SingleSplitModeWidget):
+            # Connect the single viewer to the image processor
+            self.image_processor.image_loaded.connect(self.current_ui_mode.viewer.on_image_loaded)
+            self.current_ui_mode.viewer.load_requested.connect(self.image_processor.request_image_load)
+
+            # Connect editing signal to main window state
+            self.current_ui_mode.viewer.crop_adjustment_started.connect(self.on_editing_started)
 
         # Watcher signals
         if self.watcher:
@@ -538,6 +472,9 @@ class MainWindow(QMainWindow):
             
     @Slot(bool)
     def on_viewer_zoom_changed(self, is_zoomed):
+        # This logic is only applicable in dual scan mode where viewers are present
+        if not self.viewer1 or not self.viewer2:
+            return
         # If any viewer is zoomed, we are actively editing.
         self.is_actively_editing = self.viewer1['viewer'].is_zoomed or self.viewer2['viewer'].is_zoomed
         self._check_and_update_jump_button_animation()
@@ -550,19 +487,19 @@ class MainWindow(QMainWindow):
     @Slot(list)
     def on_initial_scan_complete(self, files):
         self.image_files = files
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
         
-        # If this scan was triggered by a split operation, jump to the new pair
+        # If this scan was triggered by a split operation (dual scan mode only)
         if hasattr(self, '_split_op_index') and self._split_op_index is not None:
-            # The split operation is complete. We now jump the view to the new pair.
-            # The first image of the new pair is at the index of the original image that was split.
             self.current_index = self._split_op_index
-            self.current_index = max(0, self.current_index) # Ensure we don't go below zero.
-            self._split_op_index = None # Reset the flag for the next operation.
+            self.current_index = max(0, self.current_index)
+            self._split_op_index = None
         else:
             # Original logic for jumping to the end on a regular refresh.
             if self.current_index + 1 >= len(self.image_files) and len(self.image_files) > 0:
-                self.current_index = max(0, len(self.image_files) - 2)
-        
+                step = 1 if scanner_mode == "single_split" else 2
+                self.current_index = max(0, len(self.image_files) - step)
+
         force_reload = getattr(self, '_force_reload_on_next_scan', False)
         self.update_display(force_reload=force_reload)
         self._force_reload_on_next_scan = False
@@ -618,22 +555,33 @@ class MainWindow(QMainWindow):
             self.image_files.append(path)
             self.image_files.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
             
-            # --- Performance Tracking ---
+            # --- Performance Tracking & Stats ---
             self.scan_timestamps.append(time.time())
             self.update_scan_speed()
             self.pending_card.set_value(str(len(self.image_files)))
             self.update_total_pages()
-            # --------------------------
             
-            auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
-            auto_color = self.app_config.get("auto_color_correction_enabled", False)
-            if auto_light or auto_color:
-                QTimer.singleShot(500, lambda p=path: self.image_processor.auto_process_image(p, auto_light, auto_color))
+            # --- Mode-Specific Auto-Processing ---
+            scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+            if scanner_mode == "single_split":
+                # In this mode, we auto-split the page using the last layout
+                layout = self.current_ui_mode.get_layout_for_image(path)
+                if layout:
+                    # Immediately save the inherited layout for the new image
+                    self.current_ui_mode.save_layout_data(path, layout)
+                    self.perform_page_split(path, layout)
+            else:
+                # Standard auto-correction for dual-scan
+                auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
+                auto_color = self.app_config.get("auto_color_correction_enabled", False)
+                if auto_light or auto_color:
+                    QTimer.singleShot(500, lambda p=path: self.image_processor.auto_process_image(p, auto_light, auto_color))
 
+            # --- UI Navigation ---
             if not self.is_actively_editing:
                 self.update_timer.start()
             
-            self._check_and_update_jump_button_animation() # Always check
+            self._check_and_update_jump_button_animation()
 
     @Slot(str)
     def show_error(self, message):
@@ -644,26 +592,54 @@ class MainWindow(QMainWindow):
     #     viewer_panel['toolbar'].setVisible(has_image)
 
     def update_display(self, force_reload=False):
-        path1 = self.image_files[self.current_index] if self.current_index < len(self.image_files) else None
-        path2 = self.image_files[self.current_index + 1] if (self.current_index + 1) < len(self.image_files) else None
-
-        self.viewer1['viewer'].request_image_load(path1, force_reload=force_reload)
-        self.viewer2['viewer'].request_image_load(path2, force_reload=force_reload)
-        
-        self.viewer1['toolbar'].setEnabled(path1 is not None)
-        self.viewer2['toolbar'].setEnabled(path2 is not None)
-
         total = len(self.image_files)
-        page1_num = self.current_index + 1 if path1 else 0
-        page2_num = self.current_index + 2 if path2 else 0
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
 
-        status_text = f"Σελίδες {page1_num}-{page2_num} από {total}" if path2 else f"Σελίδα {page1_num} από {total}"
-        if not path1: status_text = "Δεν βρέθηκαν εικόνες."
-        self.status_label.setText(status_text)
+        path1_exists = self.current_index < total
+
+        if not path1_exists:
+            self.status_label.setText("Δεν βρέθηκαν εικόνες.")
+            if self.current_ui_mode and hasattr(self.current_ui_mode, 'load_image'):
+                self.current_ui_mode.load_image(None) # Clear the viewer
+            elif self.viewer1 and self.viewer2:
+                self.viewer1['viewer'].request_image_load(None, force_reload=force_reload)
+                self.viewer2['viewer'].request_image_load(None, force_reload=force_reload)
+            return
+
+        # Update status label and button states
+        page1_num = self.current_index + 1
+        if scanner_mode == "dual_scan":
+            path2_exists = (self.current_index + 1) < total
+            page2_num = self.current_index + 2 if path2_exists else 0
+            status_text = f"Σελίδες {page1_num}-{page2_num} από {total}" if path2_exists else f"Σελίδα {page1_num} από {total}"
+        else: # single_split
+            status_text = f"Εικόνα {page1_num} από {total}"
         
+        self.status_label.setText(status_text)
         self.prev_btn.setEnabled(self.current_index > 0)
-        self.next_btn.setEnabled(self.current_index + 2 < len(self.image_files))
+        self.next_btn.setEnabled(self.current_index + step < len(self.image_files))
         self._check_and_update_jump_button_animation()
+
+        # Update the UI mode's display
+        if scanner_mode == "single_split":
+            path = self.image_files[self.current_index]
+            self.current_ui_mode.load_image(path)
+
+            # Since the layout is based on the *previous* image, we fetch that.
+            layout = self.current_ui_mode.get_layout_for_image(path)
+            if layout:
+                self.current_ui_mode.viewer.set_layout_ratios(layout)
+
+        elif scanner_mode == "dual_scan":
+            path1 = self.image_files[self.current_index] if path1_exists else None
+            path2 = self.image_files[self.current_index + 1] if (self.current_index + 1) < total else None
+
+            self.viewer1['viewer'].request_image_load(path1, force_reload=force_reload)
+            self.viewer2['viewer'].request_image_load(path2, force_reload=force_reload)
+
+            self.viewer1['toolbar'].setEnabled(path1 is not None)
+            self.viewer2['toolbar'].setEnabled(path2 is not None)
 
     @Slot()
     def update_scan_speed(self):
@@ -689,22 +665,34 @@ class MainWindow(QMainWindow):
 
     def next_pair(self):
         if self.is_actively_editing or self.replace_mode_active: return
-        if self.current_index + 2 < len(self.image_files):
-            self.current_index += 2
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
+        if self.current_index + step < len(self.image_files):
+            self.current_index += step
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def prev_pair(self):
         if self.is_actively_editing or self.replace_mode_active: return
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
         if self.current_index > 0:
-            self.current_index -= 2
+            self.current_index -= step
             self.update_display()
             self._check_and_update_jump_button_animation()
 
     def jump_to_end(self):
         if self.replace_mode_active: return
         if not self.image_files: return
-        new_index = len(self.image_files) - 2 if len(self.image_files) >= 2 else 0
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+
+        new_index = len(self.image_files) - step if len(self.image_files) >= step else 0
         self.current_index = max(0, new_index)
         self.update_display()
         self.is_actively_editing = False # Jumping to end is a navigation action
@@ -712,6 +700,10 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_processing_complete(self, path):
+        # This logic is only applicable in dual scan mode where viewers are present
+        if not self.viewer1 or not self.viewer2:
+            return
+
         if self.viewer1['viewer'].image_path == path:
             self.viewer1['viewer'].request_image_load(path, force_reload=True)
         if self.viewer2['viewer'].image_path == path:
@@ -724,10 +716,13 @@ class MainWindow(QMainWindow):
             QApplication.instance().setStyleSheet(config.generate_stylesheet(self.app_config.get("theme")))
             
             theme_data = config.THEMES.get(self.app_config.get("theme"), config.THEMES["Material Dark"])
-            primary_color = theme_data.get("PRIMARY", "#b0c6ff")
-            tertiary_color = theme_data.get("TERTIARY", "#e2bada")
-            self.viewer1['viewer'].set_theme_colors(primary_color, tertiary_color)
-            self.viewer2['viewer'].set_theme_colors(primary_color, tertiary_color)
+
+            # Update viewer themes only if they exist (i.e., in dual_scan mode)
+            if self.viewer1 and self.viewer2:
+                primary_color = theme_data.get("PRIMARY", "#b0c6ff")
+                tertiary_color = theme_data.get("TERTIARY", "#e2bada")
+                self.viewer1['viewer'].set_theme_colors(primary_color, tertiary_color)
+                self.viewer2['viewer'].set_theme_colors(primary_color, tertiary_color)
             
             self.image_processor.set_caching_enabled(self.app_config.get("caching_enabled", True))
 
@@ -763,11 +758,36 @@ class MainWindow(QMainWindow):
             self.scan_worker.delete_file(image_path)
 
     def delete_current_pair(self):
-        if self.replace_mode_active: return
+        if self.replace_mode_active:
+            return
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+
+        if scanner_mode == "single_split":
+            if self.current_index < len(self.image_files):
+                path_to_delete = self.image_files[self.current_index]
+                reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
+                                             f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα, τα παράγωγά της και την καταχώρηση του layout;\n\n{os.path.basename(path_to_delete)}",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    # Clear UI, cache, layout data, and then delete all related files
+                    self.current_ui_mode.viewer.clear_image()
+                    self.image_processor.clear_cache_for_paths([path_to_delete])
+                    self.current_ui_mode.remove_layout_data(path_to_delete)
+                    self.scan_worker.delete_split_image_and_artifacts(path_to_delete)
+                    # A full refresh is needed after deletion to update the file list
+                    self.trigger_full_refresh(force_reload_viewers=True)
+            return
+
+        # Fallback to dual_scan logic
+        if not self.viewer1 or not self.viewer2:
+            return
+
         path1 = self.viewer1['viewer'].image_path
         path2 = self.viewer2['viewer'].image_path
         paths_to_delete = [p for p in [path1, path2] if p]
-        if not paths_to_delete: return
+        if not paths_to_delete:
+            return
         file_names = "\n".join([os.path.basename(p) for p in paths_to_delete])
         reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
                                      f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτές τις εικόνες;\n\n{file_names}",
@@ -851,31 +871,41 @@ class MainWindow(QMainWindow):
     def on_file_operation_complete(self, operation_type, message_or_path):
         """Handles the UI updates after a file operation from the worker is complete."""
         self.is_actively_editing = False  # Reset editing state after any operation
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
 
-        # Targeted refresh for single-image edits that don't change the file list
-        if operation_type in ["crop", "color_fix", "restore", "rotate"]:
-            path = message_or_path
-            if self.viewer1['viewer'].image_path == path:
-                self.viewer1['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
-            if self.viewer2['viewer'].image_path == path:
-                self.viewer2['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
-
-        elif operation_type == "split":
-            self.viewer1['viewer'].set_splitting_mode(False)
-            self.viewer2['viewer'].set_splitting_mode(False)
+        # --- Dual Scan Mode Specific Updates ---
+        if scanner_mode == "dual_scan" and isinstance(self.current_ui_mode, DualScanModeWidget):
+            if operation_type in ["crop", "color_fix", "restore", "rotate"]:
+                path = message_or_path
+                if self.viewer1['viewer'].image_path == path:
+                    self.viewer1['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
+                if self.viewer2['viewer'].image_path == path:
+                    self.viewer2['viewer'].request_image_load(path, force_reload=True, show_loading_animation=False)
             
-            self.image_processor.clear_cache()
-            
-            self.status_label.setText("Ανανέωση λίστας αρχείων...")
-            self.trigger_full_refresh(force_reload_viewers=True)
+            elif operation_type == "split":
+                self.viewer1['viewer'].set_splitting_mode(False)
+                self.viewer2['viewer'].set_splitting_mode(False)
+                self.image_processor.clear_cache()
+                self.status_label.setText("Ανανέωση λίστας αρχείων...")
+                self.trigger_full_refresh(force_reload_viewers=True)
 
-        elif operation_type in ["delete", "create_book", "replace_pair"]:
-            self.viewer1['viewer'].clear_image()
-            self.viewer2['viewer'].clear_image()
-            self.status_label.setText("Ανανέωση λίστας αρχείων...")
-            self.trigger_full_refresh(force_reload_viewers=True)
+            elif operation_type in ["delete", "create_book", "replace_pair"]:
+                self.viewer1['viewer'].clear_image()
+                self.viewer2['viewer'].clear_image()
+                self.status_label.setText("Ανανέωση λίστας αρχείων...")
+                self.trigger_full_refresh(force_reload_viewers=True)
 
-        elif operation_type == "transfer_all":
+        # --- Single Split Mode Specific Updates ---
+        elif scanner_mode == "single_split":
+            if operation_type == "page_split":
+                # This operation is non-destructive and happens in the background.
+                # The UI already shows the source image, so no refresh is needed.
+                # We can provide some feedback to the user in the status bar.
+                self.statusBar().showMessage(f"Επεξεργασία ολοκληρώθηκε για: {os.path.basename(message_or_path)}", 4000)
+
+
+        # --- General updates applicable to all modes ---
+        if operation_type == "transfer_all":
             if hasattr(self, 'transfer_progress_dialog'):
                 self.transfer_progress_dialog.close()
                 del self.transfer_progress_dialog
@@ -940,6 +970,10 @@ class MainWindow(QMainWindow):
         self.toggle_split_mode(viewer_panel, False)
 
     def toggle_replace_mode(self):
+        # This action is only applicable in dual scan mode where viewers are present
+        if not self.viewer1 or not self.viewer2:
+            return
+
         self.replace_mode_active = not self.replace_mode_active
         
         theme_name = self.app_config.get("theme", "Material Dark")
@@ -981,6 +1015,10 @@ class MainWindow(QMainWindow):
         self.replace_pair_btn.style().polish(self.replace_pair_btn)
 
     def execute_replace(self):
+        # This action is only applicable in dual scan mode where viewers are present
+        if not self.viewer1 or not self.viewer2:
+            return
+
         old_path1 = self.viewer1['viewer'].image_path
         old_path2 = self.viewer2['viewer'].image_path
         new_path1 = self.replace_candidates[0]
@@ -1009,7 +1047,10 @@ class MainWindow(QMainWindow):
         event.accept()
         
     def _check_and_update_jump_button_animation(self):
-        has_unseen_images = self.current_index + 2 < len(self.image_files)
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        step = 1 if scanner_mode == "single_split" else 2
+        has_unseen_images = self.current_index + step < len(self.image_files)
+
         if has_unseen_images:
             if not self.jump_button_animation.isActive():
                 self.jump_button_animation_step = 0
