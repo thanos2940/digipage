@@ -546,7 +546,7 @@ class ImageViewer(QWidget):
         self.update()
 
     def _update_page_split_handles(self):
-        s = 10
+        s = 12
         s2 = s // 2
         self.page_split_handles = {}
 
@@ -736,39 +736,69 @@ class ImageViewer(QWidget):
 
     def _move_page_split_handle(self, handle, delta):
         pixmap_rect = self._get_pixmap_rect_in_widget()
+        if pixmap_rect.isEmpty(): return # Safety check
 
         # Determine which rectangle we're working on
         rect_to_modify = self.left_rect_widget if 'left_' in handle else self.right_rect_widget
 
+        # --- BUG FIX 1 & 2: Use adjust() and clamp delta BEFORE applying ---
+        
+        dx1, dy1, dx2, dy2 = 0, 0, 0, 0
+        dx, dy = delta.x(), delta.y()
+
         if '_move' in handle:
-            dx, dy = delta.x(), delta.y()
-            # Clamp movement within pixmap boundaries
-            if dx < 0: dx = max(dx, pixmap_rect.left() - rect_to_modify.left())
-            if dx > 0: dx = min(dx, pixmap_rect.right() - rect_to_modify.right())
-            if dy < 0: dy = max(dy, pixmap_rect.top() - rect_to_modify.top())
-            if dy > 0: dy = min(dy, pixmap_rect.bottom() - rect_to_modify.bottom())
-            rect_to_modify.translate(dx, dy)
+            # --- Clamping logic for MOVE ---
+            # Clamp horizontal movement
+            if dx < 0: # Moving left
+                dx = max(dx, pixmap_rect.left() - rect_to_modify.left())
+            elif dx > 0: # Moving right
+                dx = min(dx, pixmap_rect.right() - rect_to_modify.right())
+            # Clamp vertical movement
+            if dy < 0: # Moving up
+                dy = max(dy, pixmap_rect.top() - rect_to_modify.top())
+            elif dy > 0: # Moving down
+                dy = min(dy, pixmap_rect.bottom() - rect_to_modify.bottom())
+            
+            dx1, dy1, dx2, dy2 = dx, dy, dx, dy
         else:
-            # Handle resizing
-            if "left" in handle: rect_to_modify.setLeft(rect_to_modify.left() + delta.x())
-            if "right" in handle: rect_to_modify.setRight(rect_to_modify.right() + delta.x())
-            if "top" in handle: rect_to_modify.setTop(rect_to_modify.top() + delta.y())
-            if "bottom" in handle: rect_to_modify.setBottom(rect_to_modify.bottom() + delta.y())
+            # --- Clamping logic for RESIZE ---
+            min_width = 20
+            min_height = 20
 
-            # Ensure rects don't go outside the image bounds
-            rect_to_modify.setLeft(max(rect_to_modify.left(), pixmap_rect.left()))
-            rect_to_modify.setRight(min(rect_to_modify.right(), pixmap_rect.right()))
-            rect_to_modify.setTop(max(rect_to_modify.top(), pixmap_rect.top()))
-            rect_to_modify.setBottom(min(rect_to_modify.bottom(), pixmap_rect.bottom()))
+            # Handle horizontal resize
+            if "_left" in handle:
+                # Clamp move left (don't go past pixmap left)
+                dx = max(dx, pixmap_rect.left() - rect_to_modify.left())
+                # Clamp move right (don't make width < min_width)
+                dx = min(dx, rect_to_modify.width() - min_width)
+                dx1 = dx
+            elif "_right" in handle:
+                # Clamp move right (don't go past pixmap right)
+                dx = min(dx, pixmap_rect.right() - rect_to_modify.right())
+                # Clamp move left (don't make width < min_width)
+                dx = max(dx, min_width - rect_to_modify.width())
+                dx2 = dx
 
-            # Prevent rect from becoming inverted or too small
-            if rect_to_modify.width() < 20:
-                if "left" in handle: rect_to_modify.setLeft(rect_to_modify.right() - 20)
-                else: rect_to_modify.setRight(rect_to_modify.left() + 20)
-            if rect_to_modify.height() < 20:
-                if "top" in handle: rect_to_modify.setTop(rect_to_modify.bottom() - 20)
-                else: rect_to_modify.setBottom(rect_to_modify.top() + 20)
+            # Handle vertical resize
+            if "_top" in handle:
+                # Clamp move up (don't go past pixmap top)
+                dy = max(dy, pixmap_rect.top() - rect_to_modify.top())
+                # Clamp move down (don't make height < min_height)
+                dy = min(dy, rect_to_modify.height() - min_height)
+                dy1 = dy
+            elif "_bottom" in handle:
+                # Clamp move down (don't go past pixmap bottom)
+                dy = min(dy, pixmap_rect.bottom() - rect_to_modify.bottom())
+                # Clamp move up (don't make height < min_height)
+                dy = max(dy, min_height - rect_to_modify.height())
+                dy2 = dy
+        
+        # Apply the clamped adjustments
+        rect_to_modify.adjust(dx1, dy1, dx2, dy2)
+        
+        # --- END BUG FIX ---
 
+        # The old logic is now replaced by the pre-clamping
         self._update_page_split_handles()
 
     # --- Drawing Methods ---
@@ -825,18 +855,32 @@ class ImageViewer(QWidget):
         overlay_path = full_path.subtracted(united_selection_path)
         painter.fillPath(overlay_path, QBrush(QColor(0, 0, 0, 100)))
 
-        # Draw borders for the rectangles
-        painter.setPen(QPen(QColor("#4CAF50"), 2)) # Green for left
+        # --- Fill and Border ---
+
+        # Left (Green)
+        left_fill = QColor("#4EBB51")
+        left_fill.setAlpha(20) 
+        painter.fillRect(self.left_rect_widget, left_fill)
+        painter.setPen(QPen(QColor("#4CAF50"), 3, Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.left_rect_widget)
 
-        painter.setPen(QPen(QColor("#F44336"), 2)) # Red for right
+        # Right (Red)
+        right_fill = QColor("#F44336")
+        right_fill.setAlpha(20)
+        painter.fillRect(self.right_rect_widget, right_fill)
+        painter.setPen(QPen(QColor("#F44336"), 3, Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.right_rect_widget)
 
-        # Draw all handles
+        # --- Handles ---
         painter.setPen(Qt.NoPen)
-        painter.setBrush(self.accent_color)
-        for handle_rect in self.page_split_handles.values():
-            painter.drawRect(handle_rect)
+        for handle_name, handle_rect in self.page_split_handles.items():
+            if 'left_' in handle_name:
+                painter.setBrush(QColor("#4CAF50"))  # Green for left
+            else:
+                painter.setBrush(QColor("#F44336"))  # Red for right
+            painter.drawEllipse(handle_rect)  # Circular handles
 
     def _draw_splitting_ui(self, painter, pixmap_rect):
         split_x = pixmap_rect.left() + pixmap_rect.width() * self.split_line_x_ratio

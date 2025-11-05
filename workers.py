@@ -475,7 +475,7 @@ class ScanWorker(QObject):
             with Image.open(source_path) as img:
                 w, h = img.size
 
-                # --- Convert layout ratios to absolute pixel coordinates ---
+                # Convert layout ratios to absolute pixel coordinates
                 def get_abs_rect(ratios):
                     x = int(ratios['x'] * w)
                     y = int(ratios['y'] * h)
@@ -489,20 +489,19 @@ class ScanWorker(QObject):
                 left_page = img.crop(left_box)
                 right_page = img.crop(right_box)
 
-                # --- Construct output filenames ---
+                # Construct output filenames
                 base, ext = os.path.splitext(os.path.basename(source_path))
                 left_out_path = os.path.join(final_folder, f"{base}_L{ext}")
                 right_out_path = os.path.join(final_folder, f"{base}_R{ext}")
 
-                # --- Save the cropped pages ---
+                # Save the cropped pages
                 left_page.save(left_out_path)
                 right_page.save(right_out_path)
 
-            # Signal completion (can be used to refresh UI if needed)
             self.file_operation_complete.emit("page_split", source_path)
 
         except Exception as e:
-            self.error.emit(f"Αποτυχία διαχωρισμού σελίδων για την εικόνα {os.path.basename(source_path)}: {e}")
+            self.error.emit(f"Αποτυχία διαχωρισμού σελίδων: {e}")
 
     @Slot(str)
     def delete_split_image_and_artifacts(self, source_path):
@@ -533,7 +532,7 @@ class ScanWorker(QObject):
 
             self.file_operation_complete.emit("delete", source_path)
         except Exception as e:
-            self.error.emit(f"Αποτυχία διαγραφής εικόνας και των παραγώγων της {os.path.basename(source_path)}: {e}")
+            self.error.emit(f"Αποτυχία διαγραφής: {e}")
 
 
 class NewImageHandler(FileSystemEventHandler):

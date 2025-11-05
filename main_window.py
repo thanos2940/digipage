@@ -564,12 +564,15 @@ class MainWindow(QMainWindow):
             # --- Mode-Specific Auto-Processing ---
             scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
             if scanner_mode == "single_split":
-                # In this mode, we auto-split the page using the last layout
                 layout = self.current_ui_mode.get_layout_for_image(path)
                 if layout:
-                    # Immediately save the inherited layout for the new image
+                    # Save this layout for the new image (inheritance)
                     self.current_ui_mode.save_layout_data(path, layout)
-                    self.perform_page_split(path, layout)
+                    # Automatically perform the split in the background with delay
+                    QTimer.singleShot(100, lambda p=path, l=layout: self.perform_page_split(p, l))
+                else:
+                    # No previous layout found - will be handled by viewer
+                    pass
             else:
                 # Standard auto-correction for dual-scan
                 auto_light = self.app_config.get("auto_lighting_correction_enabled", False)
@@ -625,11 +628,7 @@ class MainWindow(QMainWindow):
         if scanner_mode == "single_split":
             path = self.image_files[self.current_index]
             self.current_ui_mode.load_image(path)
-
-            # Since the layout is based on the *previous* image, we fetch that.
-            layout = self.current_ui_mode.get_layout_for_image(path)
-            if layout:
-                self.current_ui_mode.viewer.set_layout_ratios(layout)
+            # Note: The layout will be applied automatically by load_image method
 
         elif scanner_mode == "dual_scan":
             path1 = self.image_files[self.current_index] if path1_exists else None
@@ -766,16 +765,16 @@ class MainWindow(QMainWindow):
         if scanner_mode == "single_split":
             if self.current_index < len(self.image_files):
                 path_to_delete = self.image_files[self.current_index]
-                reply = QMessageBox.question(self, "Επιβεβαίωση Διαγραφής",
-                                             f"Είστε βέβαιοι ότι θέλετε να διαγράψετε οριστικά αυτή την εικόνα, τα παράγωγά της και την καταχώρηση του layout;\n\n{os.path.basename(path_to_delete)}",
-                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                reply = QMessageBox.question(
+                    self, "Επιβεβαίωση Διαγραφής",
+                    f"Θα διαγραφούν:\n- Η πρωτότυπη εικόνα\n- Τα παράγωγά της (_L, _R)\n- Το layout\n\n{os.path.basename(path_to_delete)}",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
                 if reply == QMessageBox.Yes:
-                    # Clear UI, cache, layout data, and then delete all related files
                     self.current_ui_mode.viewer.clear_image()
                     self.image_processor.clear_cache_for_paths([path_to_delete])
                     self.current_ui_mode.remove_layout_data(path_to_delete)
                     self.scan_worker.delete_split_image_and_artifacts(path_to_delete)
-                    # A full refresh is needed after deletion to update the file list
                     self.trigger_full_refresh(force_reload_viewers=True)
             return
 
@@ -898,10 +897,14 @@ class MainWindow(QMainWindow):
         # --- Single Split Mode Specific Updates ---
         elif scanner_mode == "single_split":
             if operation_type == "page_split":
-                # This operation is non-destructive and happens in the background.
-                # The UI already shows the source image, so no refresh is needed.
-                # We can provide some feedback to the user in the status bar.
-                self.statusBar().showMessage(f"Επεξεργασία ολοκληρώθηκε για: {os.path.basename(message_or_path)}", 4000)
+                filename = os.path.basename(message_or_path)
+                self.statusBar().showMessage(f"✓ Αποθηκεύτηκαν οι σελίδες για: {filename}", 4000)
+
+            elif operation_type == "delete":
+                # After deletion, refresh the file list
+                self.image_processor.clear_cache()
+                self.status_label.setText("Ανανέωση λίστας αρχείων...")
+                self.trigger_full_refresh(force_reload_viewers=True)
 
 
         # --- General updates applicable to all modes ---
