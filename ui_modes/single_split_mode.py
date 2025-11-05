@@ -93,21 +93,41 @@ class SingleSplitModeWidget(QWidget):
             # Force style re-application
             button.style().unpolish(button)
             button.style().polish(button)
-        # When a toggle is clicked, it's an edit, so enable the update button
-        self.on_layout_changed()
+        # This is now an immediate action, so it shouldn't require a separate update click.
+        pass
 
     def _on_toggle_clicked(self):
-        """Handles the logic when a page toggle is clicked."""
+        """
+        Handles the logic when a page toggle is clicked.
+        This is now an immediate action that saves the state and re-processes the image.
+        """
         self._update_toggle_styles()
 
         if not self._current_image_path:
             return
 
-        sender = self.sender()
-        if sender == self.left_page_toggle and not self.left_page_toggle.isChecked():
-            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "left")
-        elif sender == self.right_page_toggle and not self.right_page_toggle.isChecked():
-            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "right")
+        current_layout = self.viewer.get_layout_ratios()
+        if not current_layout:
+            return
+
+        # Update layout with new toggle states
+        current_layout['left_enabled'] = self.left_page_toggle.isChecked()
+        current_layout['right_enabled'] = self.right_page_toggle.isChecked()
+
+        # 1. Update the viewer's internal state for immediate visual feedback
+        self.viewer.current_layout_ratios = current_layout
+        self.viewer.update()
+
+        # 2. Save the new layout data for the current image
+        self.save_layout_data(self._current_image_path, current_layout)
+
+        # 3. Trigger the worker to re-split the page. The worker will handle
+        #    deleting an artifact if it's disabled or creating it if it's enabled.
+        self.main_window.perform_page_split(self._current_image_path, current_layout)
+
+        # 4. Show feedback
+        base_name = os.path.basename(self._current_image_path)
+        self.main_window.statusBar().showMessage(f"Ενημέρωση σελίδων για {base_name}...", 2500)
 
 
     def on_layout_changed(self):

@@ -377,7 +377,7 @@ class MainWindow(QMainWindow):
         if scanner_mode == "single_split":
             self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Λήψης")
             self.delete_pair_btn.setToolTip("Οριστική διαγραφή της εικόνας που εμφανίζεται και των παραγώγων της.")
-            self.replace_pair_btn = QPushButton("🔁 Αντικατάσταση Λήψης")
+            self.replace_pair_btn = QPushButton("🔁 Αντικατασταση Ληψης")
             self.replace_pair_btn.setToolTip("Αντικατάσταση της τρέχουσας λήψης με την επόμενη σάρωση.")
         else: # dual_scan
             self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Ζεύγους")
@@ -593,10 +593,13 @@ class MainWindow(QMainWindow):
             # --- Performance Tracking & Stats ---
             self.scan_timestamps.append(time.time())
             self.update_scan_speed()
+
             # In single_split mode, the pending count increases *after* the split is done,
             # so we defer this update until the file operation is complete.
+            # In dual_scan, we can update it immediately.
             if scanner_mode != "single_split":
                 self.pending_card.set_value(str(self._get_pending_page_count()))
+
             self.update_total_pages()
             
             # --- Mode-Specific Auto-Processing ---
@@ -857,7 +860,7 @@ class MainWindow(QMainWindow):
                 source_folder = final_folder
                 files_in_source = [os.path.join(source_folder, f) for f in os.listdir(source_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS]
         else:
-            files_in_source = self.image_files
+            files_in_source = self.image_files[:] # Create a copy
 
         if not files_in_source:
             return self.show_error("Δεν υπάρχουν επεξεργασμένες εικόνες για να προστεθούν σε ένα βιβλίο.")
@@ -1062,7 +1065,7 @@ class MainWindow(QMainWindow):
         else:
             # --- Deactivate Replace Mode ---
             if scanner_mode == "single_split":
-                self.replace_pair_btn.setText("🔁 Αντικατάσταση Λήψης")
+                self.replace_pair_btn.setText("🔁 Αντικατασταση Ληψης")
             else:
                 self.replace_pair_btn.setText("🔁 Αντικατάσταση Ζεύγους")
             self.replace_pair_btn.setProperty("class", "")
@@ -1094,6 +1097,8 @@ class MainWindow(QMainWindow):
             return
 
         self.image_processor.clear_cache_for_paths([old_path, new_path])
+        # The worker will delete the old image, rename the new one, and then
+        # re-apply the split using the provided layout data.
         self.scan_worker.replace_single_image(old_path, new_path, layout_data)
         self.toggle_replace_mode() # Deactivate
 

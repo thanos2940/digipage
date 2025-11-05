@@ -600,23 +600,25 @@ class ImageViewer(QWidget):
         if not self.is_zoomed:
             self.pan_offset = QPointF()
             # Restore the mode that was active before zooming in
-            if self.interaction_mode_before_zoom is not None:
-                self.interaction_mode = self.interaction_mode_before_zoom
-                self.interaction_mode_before_zoom = None
+            restored_mode = self.interaction_mode_before_zoom
+            self.interaction_mode_before_zoom = None
+
+            if restored_mode is not None:
+                self.interaction_mode = restored_mode
             else:
                 # Fallback to cropping if no mode was stored
                 self.interaction_mode = InteractionMode.CROPPING
 
             # Refresh UI elements based on the restored mode
-            if self.interaction_mode == InteractionMode.CROPPING:
-                self._enter_cropping_mode()
-            elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+            if self.interaction_mode == InteractionMode.PAGE_SPLITTING:
                 # Re-apply the last known layout instead of resetting to default
                 if self.current_layout_ratios:
                     self.set_layout_ratios(self.current_layout_ratios)
                 else:
                     # Fallback if no layout was ever set
                     self._initialize_default_layout()
+            elif self.interaction_mode == InteractionMode.CROPPING:
+                self._enter_cropping_mode()
 
             self._update_display_pixmap()
 
