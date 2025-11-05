@@ -519,17 +519,24 @@ class ScanWorker(QObject):
                 left_box = get_abs_rect(layout_data['left'])
                 right_box = get_abs_rect(layout_data['right'])
 
-                left_page = img.crop(left_box)
-                right_page = img.crop(right_box)
-
-                # Construct output filenames
+                # Construct output filenames for potential use
                 base, ext = os.path.splitext(os.path.basename(source_path))
                 left_out_path = os.path.join(final_folder, f"{base}_L{ext}")
                 right_out_path = os.path.join(final_folder, f"{base}_R{ext}")
 
-                # Save the cropped pages
-                left_page.save(left_out_path)
-                right_page.save(right_out_path)
+                # Crop and save the left page only if it's enabled
+                if layout_data.get('left_enabled', True):
+                    left_page = img.crop(left_box)
+                    left_page.save(left_out_path)
+                elif os.path.exists(left_out_path):
+                    os.remove(left_out_path) # Remove if it exists and is now disabled
+
+                # Crop and save the right page only if it's enabled
+                if layout_data.get('right_enabled', True):
+                    right_page = img.crop(right_box)
+                    right_page.save(right_out_path)
+                elif os.path.exists(right_out_path):
+                    os.remove(right_out_path) # Remove if it exists and is now disabled
 
             self.file_operation_complete.emit("page_split", source_path)
 
@@ -566,6 +573,24 @@ class ScanWorker(QObject):
             self.file_operation_complete.emit("delete", source_path)
         except Exception as e:
             self.error.emit(f"Αποτυχία διαγραφής: {e}")
+
+    @Slot(str, str)
+    def delete_split_artifact(self, source_path, side):
+        """Deletes a single cropped artifact (_L or _R) for a given source image."""
+        try:
+            scan_folder = os.path.dirname(source_path)
+            base, ext = os.path.splitext(os.path.basename(source_path))
+            final_folder = os.path.join(scan_folder, 'final')
+
+            side_suffix = "_L" if side == "left" else "_R"
+            artifact_path = os.path.join(final_folder, f"{base}{side_suffix}{ext}")
+
+            if os.path.exists(artifact_path):
+                os.remove(artifact_path)
+                # Optionally, emit a signal to confirm deletion
+                # self.file_operation_complete.emit("artifact_deleted", artifact_path)
+        except Exception as e:
+            self.error.emit(f"Αποτυχία διαγραφής παραγώγου: {e}")
 
 
 class NewImageHandler(FileSystemEventHandler):

@@ -56,10 +56,15 @@ class SingleSplitModeWidget(QWidget):
         self.update_button.setToolTip("Αποθηκεύει τις τρέχουσες θέσεις των πλαισίων και ενημερώνει τις εικόνες στο φάκελο 'final'.")
         self.update_button.setProperty("class", "filled success")
         self.update_button.setMinimumHeight(40)
-        self.update_button.setEnabled(False) # Disabled by default
+        self.update_button.setEnabled(False)
+
+        self.left_page_toggle = self._create_toggle_button("Αριστερή Σελίδα")
+        self.right_page_toggle = self._create_toggle_button("Δεξιά Σελίδα")
 
         toolbar_layout.addStretch()
+        toolbar_layout.addWidget(self.left_page_toggle)
         toolbar_layout.addWidget(self.update_button)
+        toolbar_layout.addWidget(self.right_page_toggle)
         toolbar_layout.addStretch()
 
         main_layout.addWidget(self.viewer)
@@ -68,6 +73,42 @@ class SingleSplitModeWidget(QWidget):
         # --- Connections (to be handled by MainWindow)---
         self.viewer.layout_changed.connect(self.on_layout_changed)
         self.update_button.clicked.connect(self.on_update_clicked)
+
+    def _create_toggle_button(self, text):
+        """Helper to create a styled, checkable button."""
+        button = QPushButton(text)
+        button.setCheckable(True)
+        button.setChecked(True)
+        button.setMinimumHeight(40)
+        button.clicked.connect(self._on_toggle_clicked)
+        return button
+
+    def _update_toggle_styles(self):
+        """Updates the visual style of toggle buttons based on their checked state."""
+        for button in [self.left_page_toggle, self.right_page_toggle]:
+            if button.isChecked():
+                button.setProperty("class", "")
+            else:
+                button.setProperty("class", "destructive")
+            # Force style re-application
+            button.style().unpolish(button)
+            button.style().polish(button)
+        # When a toggle is clicked, it's an edit, so enable the update button
+        self.on_layout_changed()
+
+    def _on_toggle_clicked(self):
+        """Handles the logic when a page toggle is clicked."""
+        self._update_toggle_styles()
+
+        if not self._current_image_path:
+            return
+
+        sender = self.sender()
+        if sender == self.left_page_toggle and not self.left_page_toggle.isChecked():
+            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "left")
+        elif sender == self.right_page_toggle and not self.right_page_toggle.isChecked():
+            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "right")
+
 
     def on_layout_changed(self):
         """Activates the update button when the user starts editing."""
@@ -82,6 +123,10 @@ class SingleSplitModeWidget(QWidget):
         current_layout = self.viewer.get_layout_ratios()
         if not current_layout:
             return
+
+        # Add the toggle states to the layout data
+        current_layout['left_enabled'] = self.left_page_toggle.isChecked()
+        current_layout['right_enabled'] = self.right_page_toggle.isChecked()
 
         # 1. Save the new layout data for the *current* image
         self.save_layout_data(self._current_image_path, current_layout)
@@ -108,13 +153,21 @@ class SingleSplitModeWidget(QWidget):
         if layout:
             # Apply the existing layout
             self.viewer.set_layout_ratios(layout)
+            # Set the toggle buttons state from the loaded layout
+            self.left_page_toggle.setChecked(layout.get('left_enabled', True))
+            self.right_page_toggle.setChecked(layout.get('right_enabled', True))
         else:
             # No layout found - save the default one
             default_layout = self.viewer.get_layout_ratios()
             if default_layout:
+                default_layout['left_enabled'] = True
+                default_layout['right_enabled'] = True
                 self.save_layout_data(self._current_image_path, default_layout)
                 # Also trigger the initial split for this first image
                 self.main_window.perform_page_split(self._current_image_path, default_layout)
+
+        # Apply the correct visual style to the toggles
+        self._update_toggle_styles()
 
     @Slot(str)
     def load_image(self, image_path):

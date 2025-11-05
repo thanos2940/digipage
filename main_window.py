@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
         self.replace_candidates = []
         self._force_reload_on_next_scan = False
         self._split_op_index = None # Track index for post-split navigation
+        self._is_closing = False
         
         self._initial_load_done = False
 
@@ -268,6 +269,22 @@ class MainWindow(QMainWindow):
         stats_cards_layout.addWidget(self.speed_card)
         stats_cards_layout.addWidget(self.pending_card)
         stats_cards_layout.addWidget(self.total_card)
+    def _get_pending_page_count(self):
+        """
+        Calculates the number of unprocessed pages, respecting the scanner mode.
+        - In 'dual_scan', it's the number of images in the root scan folder.
+        - In 'single_split', it's the number of cropped images in the 'final' subfolder.
+        """
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        scan_folder = self.app_config.get("scan_folder")
+
+        if scanner_mode == "single_split":
+            final_folder = os.path.join(scan_folder, 'final')
+            if os.path.isdir(final_folder):
+                return len([f for f in os.listdir(final_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS])
+            return 0
+        else: # dual_scan
+            return len(self.image_files)
         
         stats_group_layout.addWidget(stats_cards_widget)
 
@@ -494,6 +511,7 @@ class MainWindow(QMainWindow):
 
     @Slot(list)
     def on_initial_scan_complete(self, files):
+        if self._is_closing: return
         self.image_files = files
         scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
         
@@ -512,12 +530,13 @@ class MainWindow(QMainWindow):
         self.update_display(force_reload=force_reload)
         self._force_reload_on_next_scan = False
         
-        self.pending_card.set_value(str(len(self.image_files)))
+        self.pending_card.set_value(str(self._get_pending_page_count()))
         self.update_total_pages()
 
 
     @Slot(dict)
     def on_stats_updated(self, stats):
+        if self._is_closing: return
         staged_details = stats.get('staged_book_details', {})
         
         self.staged_pages_count = sum(staged_details.values())
@@ -551,6 +570,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_new_image_detected(self, path):
+        if self._is_closing: return
         scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
 
         if self.replace_mode_active:
@@ -573,7 +593,10 @@ class MainWindow(QMainWindow):
             # --- Performance Tracking & Stats ---
             self.scan_timestamps.append(time.time())
             self.update_scan_speed()
-            self.pending_card.set_value(str(len(self.image_files)))
+            # In single_split mode, the pending count increases *after* the split is done,
+            # so we defer this update until the file operation is complete.
+            if scanner_mode != "single_split":
+                self.pending_card.set_value(str(self._get_pending_page_count()))
             self.update_total_pages()
             
             # --- Mode-Specific Auto-Processing ---
@@ -674,7 +697,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def update_total_pages(self):
         """Calculates and updates the total pages for the day."""
-        total = self.staged_pages_count + self.data_pages_count + len(self.image_files)
+        if self._is_closing: return
+        total = self.staged_pages_count + self.data_pages_count + self._get_pending_page_count()
         self.total_card.set_value(str(total))
 
     def next_pair(self):
@@ -714,6 +738,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_processing_complete(self, path):
+        if self._is_closing: return
         # This logic is only applicable in dual scan mode where viewers are present
         if not self.viewer1 or not self.viewer2:
             return
@@ -873,6 +898,7 @@ class MainWindow(QMainWindow):
 
     @Slot(list, list)
     def on_transfer_preparation_complete(self, moves_to_confirm, warnings):
+        if self._is_closing: return
         if not moves_to_confirm and not warnings:
             QMessageBox.information(self, "Δεν Υπάρχουν Βιβλία", "Δεν υπάρχουν έγκυρα βιβλία στον φάκελο προσωρινής στάθμευσης για μεταφορά.")
             return
@@ -900,6 +926,7 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def on_file_operation_complete(self, operation_type, message_or_path):
         """Handles the UI updates after a file operation from the worker is complete."""
+        if self._is_closing: return
         self.is_actively_editing = False  # Reset editing state after any operation
         scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
 
@@ -927,9 +954,12 @@ class MainWindow(QMainWindow):
 
         # --- Single Split Mode Specific Updates ---
         elif scanner_mode == "single_split":
-            if operation_type == "page_split":
+            if operation_type in ["page_split", "replace_single"]:
                 filename = os.path.basename(message_or_path)
                 self.statusBar().showMessage(f"✓ Αποθηκεύτηκαν οι σελίδες για: {filename}", 4000)
+                # Now that the final/ folder is updated, refresh the counts
+                self.pending_card.set_value(str(self._get_pending_page_count()))
+                self.update_total_pages()
 
             elif operation_type == "delete":
                 # After deletion, refresh the file list
@@ -1069,6 +1099,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Gracefully shut down all background threads before closing."""
+        self._is_closing = True
         self.image_processor.clear_cache()
 
         if self.watcher and self.watcher.thread.isRunning():

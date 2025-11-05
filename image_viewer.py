@@ -60,6 +60,7 @@ class ImageViewer(QWidget):
         self.right_rect_widget = QRectF()
         self.page_split_handles = {}
         self._pending_layout_ratios = None
+        self.current_layout_ratios = None
 
         # Animation properties
         self._scan_line_progress = 0.0
@@ -283,6 +284,7 @@ class ImageViewer(QWidget):
             self._initialize_default_layout()
             return
 
+        self.current_layout_ratios = layout_data
         left_ratios = layout_data['left']
         right_ratios = layout_data['right']
 
@@ -609,8 +611,12 @@ class ImageViewer(QWidget):
             if self.interaction_mode == InteractionMode.CROPPING:
                 self._enter_cropping_mode()
             elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
-                # Re-initialize the layout to ensure handles are correct
-                self._initialize_default_layout()
+                # Re-apply the last known layout instead of resetting to default
+                if self.current_layout_ratios:
+                    self.set_layout_ratios(self.current_layout_ratios)
+                else:
+                    # Fallback if no layout was ever set
+                    self._initialize_default_layout()
 
             self._update_display_pixmap()
 
@@ -861,47 +867,46 @@ class ImageViewer(QWidget):
         if self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty():
             return
 
-        # Create a path that covers everything *except* the two selection rectangles
+        left_enabled = self.current_layout_ratios.get('left_enabled', True)
+        right_enabled = self.current_layout_ratios.get('right_enabled', True)
+
         full_path = QPainterPath()
         full_path.addRect(QRectF(self.rect()))
 
-        # Create a single unified path for both selection rectangles to handle overlaps correctly
-        left_path = QPainterPath()
-        left_path.addRect(self.left_rect_widget)
-        right_path = QPainterPath()
-        right_path.addRect(self.right_rect_widget)
+        selection_path = QPainterPath()
+        if left_enabled:
+            selection_path.addRect(self.left_rect_widget)
+        if right_enabled:
+            selection_path.addRect(self.right_rect_widget)
 
-        united_selection_path = left_path.united(right_path)
-
-        overlay_path = full_path.subtracted(united_selection_path)
+        overlay_path = full_path.subtracted(selection_path)
         painter.fillPath(overlay_path, QBrush(QColor(0, 0, 0, 100)))
 
-        # --- Fill and Border ---
+        # --- Left (Green) ---
+        if left_enabled:
+            left_fill = QColor("#4EBB51"); left_fill.setAlpha(20)
+            painter.fillRect(self.left_rect_widget, left_fill)
+            painter.setPen(QPen(QColor("#4CAF50"), 3, Qt.SolidLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.left_rect_widget)
 
-        # Left (Green)
-        left_fill = QColor("#4EBB51")
-        left_fill.setAlpha(20) 
-        painter.fillRect(self.left_rect_widget, left_fill)
-        painter.setPen(QPen(QColor("#4CAF50"), 3, Qt.SolidLine))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(self.left_rect_widget)
-
-        # Right (Red)
-        right_fill = QColor("#F44336")
-        right_fill.setAlpha(20)
-        painter.fillRect(self.right_rect_widget, right_fill)
-        painter.setPen(QPen(QColor("#F44336"), 3, Qt.SolidLine))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRect(self.right_rect_widget)
+        # --- Right (Red) ---
+        if right_enabled:
+            right_fill = QColor("#F44336"); right_fill.setAlpha(20)
+            painter.fillRect(self.right_rect_widget, right_fill)
+            painter.setPen(QPen(QColor("#F44336"), 3, Qt.SolidLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.right_rect_widget)
 
         # --- Handles ---
         painter.setPen(Qt.NoPen)
         for handle_name, handle_rect in self.page_split_handles.items():
-            if 'left_' in handle_name:
-                painter.setBrush(QColor("#4CAF50"))  # Green for left
-            else:
-                painter.setBrush(QColor("#F44336"))  # Red for right
-            painter.drawEllipse(handle_rect)  # Circular handles
+            if 'left_' in handle_name and left_enabled:
+                painter.setBrush(QColor("#4CAF50"))
+                painter.drawEllipse(handle_rect)
+            elif 'right_' in handle_name and right_enabled:
+                painter.setBrush(QColor("#F44336"))
+                painter.drawEllipse(handle_rect)
 
     def _draw_splitting_ui(self, painter, pixmap_rect):
         split_x = pixmap_rect.left() + pixmap_rect.width() * self.split_line_x_ratio
