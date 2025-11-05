@@ -546,7 +546,7 @@ class ImageViewer(QWidget):
         self.update()
 
     def _update_page_split_handles(self):
-        s = 10
+        s = 12
         s2 = s // 2
         self.page_split_handles = {}
 
@@ -825,18 +825,32 @@ class ImageViewer(QWidget):
         overlay_path = full_path.subtracted(united_selection_path)
         painter.fillPath(overlay_path, QBrush(QColor(0, 0, 0, 100)))
 
-        # Draw borders for the rectangles
-        painter.setPen(QPen(QColor("#4CAF50"), 2)) # Green for left
+        # --- Fill and Border ---
+
+        # Left (Green)
+        left_fill = QColor("#4CAF50")
+        left_fill.setAlpha(30)
+        painter.fillRect(self.left_rect_widget, left_fill)
+        painter.setPen(QPen(QColor("#4CAF50"), 3, Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.left_rect_widget)
 
-        painter.setPen(QPen(QColor("#F44336"), 2)) # Red for right
+        # Right (Red)
+        right_fill = QColor("#F44336")
+        right_fill.setAlpha(30)
+        painter.fillRect(self.right_rect_widget, right_fill)
+        painter.setPen(QPen(QColor("#F44336"), 3, Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.right_rect_widget)
 
-        # Draw all handles
+        # --- Handles ---
         painter.setPen(Qt.NoPen)
-        painter.setBrush(self.accent_color)
-        for handle_rect in self.page_split_handles.values():
-            painter.drawRect(handle_rect)
+        for handle_name, handle_rect in self.page_split_handles.items():
+            if 'left_' in handle_name:
+                painter.setBrush(QColor("#4CAF50"))  # Green for left
+            else:
+                painter.setBrush(QColor("#F44336"))  # Red for right
+            painter.drawEllipse(handle_rect)  # Circular handles
 
     def _draw_splitting_ui(self, painter, pixmap_rect):
         split_x = pixmap_rect.left() + pixmap_rect.width() * self.split_line_x_ratio

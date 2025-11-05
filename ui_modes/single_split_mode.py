@@ -1,7 +1,7 @@
 import os
 import json
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Slot, QTimer
 
 import config
 from image_viewer import ImageViewer
@@ -15,6 +15,17 @@ class SingleSplitModeWidget(QWidget):
     system performs the cropping automatically based on the last known layout,
     and the user only intervenes to adjust the layout and click "Update"
     if the automatic result is incorrect.
+
+    WORKFLOW:
+    1. A new image is detected in the scan folder.
+    2. The system automatically:
+       - Loads the crop layout from the previous image.
+       - Saves this layout for the new image (inheritance).
+       - Performs an automatic crop/split operation.
+       - Saves the cropped pages to the 'final' subfolder.
+    3. The user can navigate to any image and see its specific crop areas.
+    4. If the auto-crop is incorrect, the user adjusts the layout and clicks "Update Layout".
+    5. When an image is deleted, all related files (original, crops, layout) are removed.
     """
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -82,6 +93,29 @@ class SingleSplitModeWidget(QWidget):
         self.update_button.setEnabled(False)
         self.main_window.is_actively_editing = False
 
+        # 4. Show feedback to user
+        self.main_window.statusBar().showMessage(
+            f"Ενημέρωση layout για {os.path.basename(self._current_image_path)}...", 3000
+        )
+
+    def _apply_layout_after_load(self):
+        """Helper method to apply layout after image has loaded."""
+        if not self._current_image_path:
+            return
+
+        layout = self.get_layout_for_image(self._current_image_path)
+
+        if layout:
+            # Apply the existing layout
+            self.viewer.set_layout_ratios(layout)
+        else:
+            # No layout found - save the default one
+            default_layout = self.viewer.get_layout_ratios()
+            if default_layout:
+                self.save_layout_data(self._current_image_path, default_layout)
+                # Also trigger the initial split for this first image
+                self.main_window.perform_page_split(self._current_image_path, default_layout)
+
     @Slot(str)
     def load_image(self, image_path):
         """Public method to load a new image and its corresponding layout."""
@@ -89,6 +123,10 @@ class SingleSplitModeWidget(QWidget):
         self.viewer.request_image_load(image_path)
         self.update_button.setEnabled(False)
         self.main_window.is_actively_editing = False
+
+        if image_path:
+            # Delayed layout application after image loads
+            QTimer.singleShot(200, self._apply_layout_after_load)
 
     def get_layout_for_image(self, image_path):
         """
