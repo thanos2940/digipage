@@ -465,11 +465,23 @@ class ScanWorker(QObject):
         page split operation using the layout from the original image.
         """
         try:
-            # 1. Delete the old image and its artifacts
+            # 1. Delete the old image and its artifacts. This operation now needs to
+            # be more careful since the image processor might have just released the file.
+            # We will handle this by retrying the deletion.
             self.delete_split_image_and_artifacts(old_path)
 
-            # 2. Rename the new image to match the old one's name
-            os.rename(new_path, old_path)
+            # 2. Rename the new image with retries to handle potential file locks
+            rename_attempts = 5
+            for i in range(rename_attempts):
+                try:
+                    os.rename(new_path, old_path)
+                    break # Success
+                except OSError as e:
+                    if i < rename_attempts - 1:
+                        time.sleep(0.2) # Wait 200ms before retrying
+                        continue
+                    else:
+                        raise e # Re-raise the exception if all retries fail
 
             # 3. Re-run the page split process on the newly renamed image
             self.perform_page_split(old_path, layout_data)
@@ -684,9 +696,10 @@ class ImageProcessor(QObject):
         pil_img = None
         for i in range(5):  # Retry up to 5 times
             try:
-                img = Image.open(path)
-                img.load()  # Force loading the image data to catch truncation
-                pil_img = img
+                with Image.open(path) as img:
+                    img.load()  # Force loading the image data to catch truncation
+                    # Create a copy to ensure the data is in memory after the file handle is closed
+                    pil_img = img.copy()
                 break  # Success
             except (IOError, OSError) as e:
                 if "truncated" in str(e).lower():
