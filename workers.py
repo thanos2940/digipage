@@ -193,57 +193,54 @@ class ScanWorker(QObject):
                 self.error.emit(f"Σφάλμα κατά τη διαγραφή αρχείου {os.path.basename(path)}: {e}")
                 return
 
-    @Slot(str, list)
-    def create_book(self, book_name, files_to_move):
+    @Slot(str, list, str)
+    def create_book(self, book_name, files_to_move, source_folder):
         self._is_cancelled = False
+        scan_folder = self.config.get("scan_folder")
+        is_single_split_mode = "final" in source_folder
+
         try:
             todays_folder = self.config.get("todays_books_folder")
             if not todays_folder or not os.path.isdir(todays_folder):
                 self.error.emit(f"Ο Φάκελος Σημερινών Βιβλίων δεν είναι έγκυρος: {todays_folder}")
                 return
+
             new_book_path = os.path.join(todays_folder, book_name)
             os.makedirs(new_book_path, exist_ok=True)
 
             total_files = len(files_to_move)
-            failed_deletions = []
-
-            # --- Throttling Logic ---
-            last_update_time = time.time()
-            update_interval = 0.25  # seconds
+            files_to_move.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
 
             for i, file_path in enumerate(files_to_move):
                 if self._is_cancelled:
-                    try:
-                        shutil.rmtree(new_book_path)
-                    except OSError as e:
-                        self.error.emit(f"Could not clean up partially created book folder: {e}")
+                    shutil.rmtree(new_book_path) # Cleanup
                     self.file_operation_complete.emit("create_book", f"Η δημιουργία του βιβλίου '{book_name}' ακυρώθηκε.")
                     return
 
                 if os.path.exists(file_path):
                     _, extension = os.path.splitext(file_path)
-                    new_base_name = f"{i + 1}{extension}"
+                    new_base_name = f"{i + 1:04d}{extension}" # Use padding for consistent sorting
                     dest_path = os.path.join(new_book_path, new_base_name)
-                    
-                    if not self._robust_move(file_path, dest_path):
-                        original_base_name = os.path.basename(file_path)
-                        failed_deletions.append(original_base_name)
-                
-                # --- Emit progress signal on a timer ---
-                current_time = time.time()
-                # Also emit on the very last file to guarantee it reaches 100%
-                if (current_time - last_update_time >= update_interval) or (i + 1 == total_files):
-                    self.book_creation_progress.emit(i + 1, total_files)
-                    last_update_time = current_time
-            
-            # Construct final message
-            final_message = f"Το βιβλίο '{book_name}' δημιουργήθηκε με {total_files} σελίδες."
-            if failed_deletions:
-                failed_files_str = ', '.join(failed_deletions)
-                final_message += (f"\nΠΡΟΕΙΔΟΠΟΙΗΣΗ: Δεν ήταν δυνατή η διαγραφή {len(failed_deletions)} αρχείων "
-                                  f"από τον φάκελο σάρωσης: {failed_files_str}")
+                    shutil.move(file_path, dest_path)
 
-            self.file_operation_complete.emit("create_book", final_message)
+                self.book_creation_progress.emit(i + 1, total_files)
+
+            # --- Cleanup for Single Split Mode ---
+            if is_single_split_mode:
+                # Delete original full-size images from the main scan folder
+                original_files = [f for f in os.listdir(scan_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS]
+                for f in original_files:
+                    try:
+                        os.remove(os.path.join(scan_folder, f))
+                    except OSError:
+                        pass # Ignore if deletion fails
+                
+                # Delete the 'final' folder itself
+                final_folder_path = os.path.join(scan_folder, 'final')
+                if os.path.isdir(final_folder_path):
+                    shutil.rmtree(final_folder_path, ignore_errors=True)
+            
+            self.file_operation_complete.emit("create_book", f"Το βιβλίο '{book_name}' δημιουργήθηκε.")
 
         except Exception as e:
             self.error.emit(f"Αποτυχία δημιουργίας βιβλίου {book_name}: {e}")
@@ -460,6 +457,30 @@ class ScanWorker(QObject):
             self.file_operation_complete.emit("replace_pair", "Το ζεύγος αντικαταστάθηκε με επιτυχία.")
         except Exception as e:
             self.error.emit(f"Αποτυχία αντικατάστασης ζεύγους: {e}")
+
+    @Slot(str, str, dict)
+    def replace_single_image(self, old_path, new_path, layout_data):
+        """
+        Replaces a single source image with a new one, then re-applies the
+        page split operation using the layout from the original image.
+        """
+        try:
+            # 1. Delete the old image and its artifacts
+            self.delete_split_image_and_artifacts(old_path)
+
+            # 2. Rename the new image to match the old one's name
+            os.rename(new_path, old_path)
+
+            # 3. Re-run the page split process on the newly renamed image
+            self.perform_page_split(old_path, layout_data)
+
+            # 4. Signal completion
+            # Use a more generic signal type for broader use
+            self.file_operation_complete.emit("replace_single", old_path)
+
+        except Exception as e:
+            self.error.emit(f"Αποτυχία αντικατάστασης εικόνας: {e}")
+
 
     @Slot(str, dict)
     def perform_page_split(self, source_path, layout_data):

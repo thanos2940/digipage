@@ -44,6 +44,7 @@ class ImageViewer(QWidget):
         self.active_handle = None
         self.last_mouse_pos = QPoint()
         self.pan_offset = QPointF()
+        self.interaction_mode_before_zoom = None
         
         # Cropping/Splitting/Rotating state
         self.crop_rect_widget = QRect()
@@ -412,12 +413,18 @@ class ImageViewer(QWidget):
         self.is_zoomed = not self.is_zoomed
         self.zoom_state_changed.emit(self.is_zoomed)
         self.scan_line_animation.stop()
+
+        if self.is_zoomed:
+            # Store the current mode before entering panning mode
+            self.interaction_mode_before_zoom = self.interaction_mode
+            self.interaction_mode = InteractionMode.PANNING
+        else:
+            # When zooming out, the mode will be restored in _on_zoom_animation_finished
+            pass
         
         start_zoom = self._zoom_level
         fit_zoom = min(self.width() / self.pixmap.width(), self.height() / self.pixmap.height())
         end_zoom = fit_zoom * 1.5 if self.is_zoomed else fit_zoom
-
-        self.interaction_mode = InteractionMode.PANNING if self.is_zoomed else InteractionMode.CROPPING
 
         self.zoom_animation.stop()
         self.zoom_animation.setStartValue(start_zoom)
@@ -588,9 +595,23 @@ class ImageViewer(QWidget):
         self.update()
 
     def _on_zoom_animation_finished(self):
-        if not self.is_zoomed and self.interaction_mode not in [InteractionMode.SPLITTING, InteractionMode.ROTATING]:
+        if not self.is_zoomed:
             self.pan_offset = QPointF()
-            self._enter_cropping_mode()
+            # Restore the mode that was active before zooming in
+            if self.interaction_mode_before_zoom is not None:
+                self.interaction_mode = self.interaction_mode_before_zoom
+                self.interaction_mode_before_zoom = None
+            else:
+                # Fallback to cropping if no mode was stored
+                self.interaction_mode = InteractionMode.CROPPING
+
+            # Refresh UI elements based on the restored mode
+            if self.interaction_mode == InteractionMode.CROPPING:
+                self._enter_cropping_mode()
+            elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                # Re-initialize the layout to ensure handles are correct
+                self._initialize_default_layout()
+
             self._update_display_pixmap()
 
     def _update_display_pixmap(self):

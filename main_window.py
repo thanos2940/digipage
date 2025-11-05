@@ -356,14 +356,22 @@ class MainWindow(QMainWindow):
         self.jump_end_btn.clicked.connect(self.jump_to_end)
         self.refresh_btn.clicked.connect(self.trigger_full_refresh)
         
-        self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Ζεύγους")
-        self.delete_pair_btn.setToolTip("Οριστική διαγραφή των δύο εικόνων που εμφανίζονται.")
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        if scanner_mode == "single_split":
+            self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Λήψης")
+            self.delete_pair_btn.setToolTip("Οριστική διαγραφή της εικόνας που εμφανίζεται και των παραγώγων της.")
+            self.replace_pair_btn = QPushButton("🔁 Αντικατάσταση Λήψης")
+            self.replace_pair_btn.setToolTip("Αντικατάσταση της τρέχουσας λήψης με την επόμενη σάρωση.")
+        else: # dual_scan
+            self.delete_pair_btn = QPushButton("🗑️ Διαγραφή Ζεύγους")
+            self.delete_pair_btn.setToolTip("Οριστική διαγραφή των δύο εικόνων που εμφανίζονται.")
+            self.replace_pair_btn = QPushButton("🔁 Αντικατάσταση Ζεύγους")
+            self.replace_pair_btn.setToolTip("Αντικατάσταση του τρέχοντος ζεύγους με τις δύο επόμενες σαρωμένες εικόνες.")
+
         self.delete_pair_btn.setProperty("class", "destructive filled")
         self.delete_pair_btn.setMinimumHeight(40)
         self.delete_pair_btn.clicked.connect(self.delete_current_pair)
-        
-        self.replace_pair_btn = QPushButton("🔁 Αντικατάσταση Ζεύγους")
-        self.replace_pair_btn.setToolTip("Αντικατάσταση του τρέχοντος ζεύγους με τις δύο επόμενες σαρωμένες εικόνες.")
+
         self.replace_pair_btn.setMinimumHeight(40)
         self.replace_pair_btn.clicked.connect(self.toggle_replace_mode)
 
@@ -543,12 +551,19 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_new_image_detected(self, path):
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+
         if self.replace_mode_active:
             self.replace_candidates.append(path)
-            if len(self.replace_candidates) >= 2:
-                self.execute_replace()
-            else:
-                self.status_label.setText("Αναμονή για 1 ακόμα σάρωση για αντικατάσταση του ζεύγους...")
+
+            if scanner_mode == "single_split":
+                if len(self.replace_candidates) >= 1:
+                    self.execute_single_replace()
+            else: # dual_scan
+                if len(self.replace_candidates) >= 2:
+                    self.execute_replace()
+                else:
+                    self.status_label.setText("Αναμονή για 1 ακόμα σάρωση για αντικατάσταση του ζεύγους...")
             return
 
         if path not in self.image_files:
@@ -803,23 +818,39 @@ class MainWindow(QMainWindow):
 
     def create_book(self):
         book_name = self.book_name_edit.text().strip()
-        if not book_name: return self.show_error("Το όνομα του βιβλίου δεν μπορεί να είναι κενό.")
-        if not self.image_files: return self.show_error("Δεν υπάρχουν σαρωμένες εικόνες για να προστεθούν σε ένα βιβλίο.")
-        
+        if not book_name:
+            return self.show_error("Το όνομα του βιβλίου δεν μπορεί να είναι κενό.")
+
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        scan_folder = self.app_config.get("scan_folder")
+        source_folder = scan_folder
+        files_in_source = []
+
+        if scanner_mode == "single_split":
+            final_folder = os.path.join(scan_folder, 'final')
+            if os.path.isdir(final_folder):
+                source_folder = final_folder
+                files_in_source = [os.path.join(source_folder, f) for f in os.listdir(source_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS]
+        else:
+            files_in_source = self.image_files
+
+        if not files_in_source:
+            return self.show_error("Δεν υπάρχουν επεξεργασμένες εικόνες για να προστεθούν σε ένα βιβλίο.")
+
         reply = QMessageBox.question(self, "Επιβεβαίωση Δημιουργίας Βιβλίου",
-                                     f"Δημιουργία βιβλίου '{book_name}' και μετακίνηση {len(self.image_files)} σαρώσεων σε αυτό;",
+                                     f"Δημιουργία βιβλίου '{book_name}' και μετακίνηση {len(files_in_source)} σελίδων σε αυτό;",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.progress_dialog = QProgressDialog(f"Δημιουργία βιβλίου '{book_name}'...", "Ακύρωση", 0, len(self.image_files), self)
+            self.progress_dialog = QProgressDialog(f"Δημιουργία βιβλίου '{book_name}'...", "Ακύρωση", 0, len(files_in_source), self)
             self.progress_dialog.setWindowTitle("Μεταφορά Εικόνων")
             self.progress_dialog.setWindowModality(Qt.WindowModal)
             self.progress_dialog.setAutoClose(True)
             self.progress_dialog.canceled.connect(self.scan_worker.cancel_operation)
             self.progress_dialog.show()
 
-            files_to_move = list(self.image_files)
-            self.image_processor.clear_cache_for_paths(files_to_move)
-            self.scan_worker.create_book(book_name, files_to_move)
+            # Pass the correct source folder and file list to the worker
+            self.image_processor.clear_cache_for_paths(files_in_source)
+            self.scan_worker.create_book(book_name, files_in_source, source_folder)
 
     @Slot(int, int)
     def on_book_creation_progress(self, processed, total):
@@ -973,55 +1004,45 @@ class MainWindow(QMainWindow):
         self.toggle_split_mode(viewer_panel, False)
 
     def toggle_replace_mode(self):
-        # This action is only applicable in dual scan mode where viewers are present
-        if not self.viewer1 or not self.viewer2:
-            return
-
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
         self.replace_mode_active = not self.replace_mode_active
         
-        theme_name = self.app_config.get("theme", "Material Dark")
-        theme = config.THEMES.get(theme_name, config.THEMES["Material Dark"])
-        
+        theme = self.get_current_theme()
+
         if self.replace_mode_active:
-            path1 = self.viewer1['viewer'].image_path
-            path2 = self.viewer2['viewer'].image_path
-            if not path1 or not path2:
-                QMessageBox.warning(self, "Η Ενέργεια Αποκλείστηκε", "Πρέπει να υπάρχει ένα πλήρες ζεύγος στην οθόνη για τη χρήση της λειτουργίας Αντικατάστασης.")
-                self.replace_mode_active = False
-                return
+            # --- Activate Replace Mode ---
+            if scanner_mode == "single_split":
+                if not self.current_ui_mode.viewer.image_path:
+                    QMessageBox.warning(self, "Η Ενέργεια Αποκλείστηκε", "Πρέπει να υπάρχει μια εικόνα στην οθόνη για την αντικατάσταση.")
+                    self.replace_mode_active = False
+                    return
+                self.replace_pair_btn.setText("❌ Ακύρωση")
+                self.status_label.setText("Αναμονή για 1 νέα σάρωση για αντικατάσταση της λήψης...")
+            else: # dual_scan
+                if not self.viewer1['viewer'].image_path or not self.viewer2['viewer'].image_path:
+                    QMessageBox.warning(self, "Η Ενέργεια Αποκλείστηκε", "Πρέπει να υπάρχει ένα πλήρες ζεύγος στην οθόνη για την αντικατάσταση.")
+                    self.replace_mode_active = False
+                    return
+                self.replace_pair_btn.setText("❌ Ακύρωση Αντικατάστασης")
+                self.status_label.setText("Αναμονή για 2 νέες σαρώσεις για αντικατάσταση του ζεύγους...")
 
-            self.replace_pair_btn.setText("❌ Ακύρωση Αντικατάστασης")
             self.replace_pair_btn.setProperty("class", "destructive filled")
-            self.status_label.setText("Αναμονή για 2 νέες σαρώσεις για αντικατάσταση του ζεύγους...")
-
-            tertiary_color = QColor(theme['TERTIARY'])
-            tertiary_rgb = tertiary_color.getRgb()
-            accent_style = f"""
-                QFrame#ViewerFrame {{
-                    background-color: rgba({tertiary_rgb[0]}, {tertiary_rgb[1]}, {tertiary_rgb[2]}, 25);
-                    border: 1px solid {theme['TERTIARY']};
-                    border-radius: 12px;
-                }}
-            """
-            self.viewer1['frame'].setStyleSheet(accent_style)
-            self.viewer2['frame'].setStyleSheet(accent_style)
             self.replace_candidates = []
+
         else:
-            self.replace_pair_btn.setText("🔁 Αντικατάσταση Ζεύγους")
+            # --- Deactivate Replace Mode ---
+            if scanner_mode == "single_split":
+                self.replace_pair_btn.setText("🔁 Αντικατάσταση Λήψης")
+            else:
+                self.replace_pair_btn.setText("🔁 Αντικατάσταση Ζεύγους")
             self.replace_pair_btn.setProperty("class", "")
-            
-            self.viewer1['frame'].setStyleSheet("")
-            self.viewer2['frame'].setStyleSheet("")
-            self.update_display() 
+            self.update_display()
         
+        # Force stylesheet refresh
         self.replace_pair_btn.style().unpolish(self.replace_pair_btn)
         self.replace_pair_btn.style().polish(self.replace_pair_btn)
 
     def execute_replace(self):
-        # This action is only applicable in dual scan mode where viewers are present
-        if not self.viewer1 or not self.viewer2:
-            return
-
         old_path1 = self.viewer1['viewer'].image_path
         old_path2 = self.viewer2['viewer'].image_path
         new_path1 = self.replace_candidates[0]
@@ -1029,7 +1050,22 @@ class MainWindow(QMainWindow):
 
         self.image_processor.clear_cache_for_paths([old_path1, old_path2])
         self.scan_worker.replace_pair(old_path1, old_path2, new_path1, new_path2)
-        self.toggle_replace_mode() # Deactivate mode
+        self.toggle_replace_mode()
+
+    def execute_single_replace(self):
+        old_path = self.current_ui_mode.viewer.image_path
+        new_path = self.replace_candidates[0]
+
+        # Retrieve the layout from the *old* image before it's deleted
+        layout_data = self.current_ui_mode.get_layout_for_image(old_path)
+        if not layout_data:
+            self.show_error("Δεν βρέθηκε layout για την παλιά εικόνα. Η αντικατάσταση απέτυχε.")
+            self.toggle_replace_mode() # Deactivate
+            return
+
+        self.image_processor.clear_cache_for_paths([old_path, new_path])
+        self.scan_worker.replace_single_image(old_path, new_path, layout_data)
+        self.toggle_replace_mode() # Deactivate
 
     def closeEvent(self, event):
         """Gracefully shut down all background threads before closing."""
