@@ -269,24 +269,9 @@ class MainWindow(QMainWindow):
         stats_cards_layout.addWidget(self.speed_card)
         stats_cards_layout.addWidget(self.pending_card)
         stats_cards_layout.addWidget(self.total_card)
-    def _get_pending_page_count(self):
-        """
-        Calculates the number of unprocessed pages, respecting the scanner mode.
-        - In 'dual_scan', it's the number of images in the root scan folder.
-        - In 'single_split', it's the number of cropped images in the 'final' subfolder.
-        """
-        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
-        scan_folder = self.app_config.get("scan_folder")
-
-        if scanner_mode == "single_split":
-            final_folder = os.path.join(scan_folder, 'final')
-            if os.path.isdir(final_folder):
-                return len([f for f in os.listdir(final_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS])
-            return 0
-        else: # dual_scan
-            return len(self.image_files)
         
         stats_group_layout.addWidget(stats_cards_widget)
+        stats_group.setLayout(stats_group_layout)
 
         # --- Book Creation Panel ---
         book_group = QGroupBox("Δημιουργία Βιβλίου")
@@ -326,6 +311,7 @@ class MainWindow(QMainWindow):
         today_layout.addWidget(scroll_area)
         today_layout.addWidget(self.transfer_all_btn)
         today_layout.addWidget(self.view_log_btn) # Προσθέστε το νέο κουμπί εδώ
+        today_group.setLayout(today_layout)
         
         settings_btn = QPushButton("Ρυθμίσεις")
         settings_btn.setToolTip("Άνοιγμα του παραθύρου ρυθμίσεων της εφαρμογής.")
@@ -339,6 +325,22 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.RightDockWidgetArea, sidebar_dock)
 
+    def _get_pending_page_count(self):
+        """
+        Calculates the number of unprocessed pages, respecting the scanner mode.
+        - In 'dual_scan', it's the number of images in the root scan folder.
+        - In 'single_split', it's the number of cropped images in the 'final' subfolder.
+        """
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        scan_folder = self.app_config.get("scan_folder")
+
+        if scanner_mode == "single_split":
+            final_folder = os.path.join(scan_folder, 'final')
+            if os.path.isdir(final_folder):
+                return len([f for f in os.listdir(final_folder) if os.path.splitext(f)[1].lower() in config.ALLOWED_EXTENSIONS])
+            return 0
+        else: # dual_scan
+            return len(self.image_files)
 
     def create_bottom_bar(self, main_layout):
         bottom_bar = QFrame()
@@ -477,6 +479,8 @@ class MainWindow(QMainWindow):
             # ImageViewer -> MainWindow (for editing state)
             self.viewer1['viewer'].crop_adjustment_started.connect(self.on_editing_started)
             self.viewer2['viewer'].crop_adjustment_started.connect(self.on_editing_started)
+            self.viewer1['viewer'].crop_adjustment_finished.connect(self.on_editing_finished)
+            self.viewer2['viewer'].crop_adjustment_finished.connect(self.on_editing_finished)
             self.viewer1['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
             self.viewer2['viewer'].zoom_state_changed.connect(self.on_viewer_zoom_changed)
 
@@ -487,6 +491,7 @@ class MainWindow(QMainWindow):
 
             # Connect editing signal to main window state
             self.current_ui_mode.viewer.crop_adjustment_started.connect(self.on_editing_started)
+            self.current_ui_mode.viewer.crop_adjustment_finished.connect(self.on_editing_finished)
 
         # Watcher signals
         if self.watcher:
@@ -507,6 +512,11 @@ class MainWindow(QMainWindow):
     @Slot()
     def on_editing_started(self):
         self.is_actively_editing = True
+        self._check_and_update_jump_button_animation()
+
+    @Slot()
+    def on_editing_finished(self):
+        self.is_actively_editing = False
         self._check_and_update_jump_button_animation()
 
     @Slot(list)
@@ -633,6 +643,7 @@ class MainWindow(QMainWindow):
     #     viewer_panel['toolbar'].setVisible(has_image)
 
     def update_display(self, force_reload=False):
+        self.is_actively_editing = False
         total = len(self.image_files)
         scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
         step = 1 if scanner_mode == "single_split" else 2
@@ -733,7 +744,6 @@ class MainWindow(QMainWindow):
         new_index = len(self.image_files) - step if len(self.image_files) >= step else 0
         self.current_index = max(0, new_index)
         self.update_display()
-        self.is_actively_editing = False # Jumping to end is a navigation action
         self._check_and_update_jump_button_animation()
 
     @Slot(str)

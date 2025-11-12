@@ -23,6 +23,7 @@ class ImageViewer(QWidget):
     zoom_state_changed = Signal(bool)
     rotation_finished = Signal(str, float)
     layout_changed = Signal()
+    crop_adjustment_finished = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,6 +166,8 @@ class ImageViewer(QWidget):
                     self._initialize_default_layout()
             self._start_scan_line_animation()
     
+        self.update()
+    
     # --- View and State Management ---
     def reset_view(self):
         self.is_zoomed = False
@@ -189,8 +192,6 @@ class ImageViewer(QWidget):
         if self.interaction_mode != InteractionMode.PAGE_SPLITTING:
             self.left_rect_widget = QRectF()
             self.right_rect_widget = QRectF()
-    
-        self.update()
 
     def set_splitting_mode(self, enabled):
         if self.pixmap.isNull(): return
@@ -330,52 +331,57 @@ class ImageViewer(QWidget):
     # --- Event Handlers ---
     def paintEvent(self, event):
         super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
         
-        if self.is_loading:
-            self._draw_loading_animation(painter)
-            return
-
-        if self.display_pixmap.isNull():
-            return
-
-        pixmap_rect_unrotated = self._get_pixmap_rect_in_widget()
-
-        if self.interaction_mode == InteractionMode.ROTATING:
-            crop_frame = pixmap_rect_unrotated
-
-            painter.save()
-            path = QPainterPath()
-            path.addRect(QRectF(self.rect()))
-            path.addRect(crop_frame)
-            painter.fillPath(path, QBrush(QColor(0, 0, 0, 128)))
+        painter = QPainter()
+        painter.begin(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
             
-            painter.setClipRect(crop_frame)
+            if self.is_loading:
+                self._draw_loading_animation(painter)
+                return
 
-            zoom_factor = self._calculate_rotation_zoom()
-            center = crop_frame.center()
-            painter.translate(center)
-            painter.scale(zoom_factor, zoom_factor)
-            painter.rotate(self.rotation_angle)
-            painter.translate(-center)
+            if self.display_pixmap.isNull():
+                return
 
-            painter.drawPixmap(pixmap_rect_unrotated.toRect(), self.display_pixmap)
-            painter.restore()
+            pixmap_rect_unrotated = self._get_pixmap_rect_in_widget()
 
-            self._draw_rotation_ui(painter, pixmap_rect_unrotated)
-        else:
-            painter.drawPixmap(pixmap_rect_unrotated.toRect(), self.display_pixmap)
-            if not self.is_zoomed:
-                if self.interaction_mode == InteractionMode.SPLITTING:
-                    self._draw_splitting_ui(painter, pixmap_rect_unrotated)
-                elif self.interaction_mode == InteractionMode.CROPPING:
-                    self._draw_cropping_ui(painter, pixmap_rect_unrotated)
-                elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
-                    self._draw_page_splitting_ui(painter, pixmap_rect_unrotated)
+            if self.interaction_mode == InteractionMode.ROTATING:
+                crop_frame = pixmap_rect_unrotated
 
-        if self.scan_line_animation.state() == QPropertyAnimation.Running:
-            self._draw_border_animation(painter, pixmap_rect_unrotated)
+                painter.save()
+                path = QPainterPath()
+                path.addRect(QRectF(self.rect()))
+                path.addRect(crop_frame)
+                painter.fillPath(path, QBrush(QColor(0, 0, 0, 128)))
+                
+                painter.setClipRect(crop_frame)
+
+                zoom_factor = self._calculate_rotation_zoom()
+                center = crop_frame.center()
+                painter.translate(center)
+                painter.scale(zoom_factor, zoom_factor)
+                painter.rotate(self.rotation_angle)
+                painter.translate(-center)
+
+                painter.drawPixmap(pixmap_rect_unrotated.toRect(), self.display_pixmap)
+                painter.restore()
+
+                self._draw_rotation_ui(painter, pixmap_rect_unrotated)
+            else:
+                painter.drawPixmap(pixmap_rect_unrotated.toRect(), self.display_pixmap)
+                if not self.is_zoomed:
+                    if self.interaction_mode == InteractionMode.SPLITTING:
+                        self._draw_splitting_ui(painter, pixmap_rect_unrotated)
+                    elif self.interaction_mode == InteractionMode.CROPPING:
+                        self._draw_cropping_ui(painter, pixmap_rect_unrotated)
+                    elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
+                        self._draw_page_splitting_ui(painter, pixmap_rect_unrotated)
+
+            if self.scan_line_animation.state() == QPropertyAnimation.Running:
+                self._draw_border_animation(painter, pixmap_rect_unrotated)
+        finally:
+            painter.end()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -522,6 +528,9 @@ class ImageViewer(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self.active_handle:
+                self.crop_adjustment_finished.emit()
+
             if self.active_handle == "rotate":
                 if abs(self.rotation_angle) > 0.1: 
                     self.rotation_finished.emit(self.image_path, self.rotation_angle)
@@ -671,12 +680,12 @@ class ImageViewer(QWidget):
         # Prioritize corners for diagonal resize
         for handle, rect in self.crop_handles.items():
             # Inflate corner rects slightly for easier grabbing
-            if rect.adjusted(-4, -4, 4, 4).contains(pos):
+            if rect.adjusted(-8, -8, 8, 8).contains(pos):
                 return handle
 
         # If no corner was hit, check the edges for horizontal/vertical resize
         r = self.crop_rect_widget
-        tolerance = 8  # Click tolerance in pixels
+        tolerance = 12  # Click tolerance in pixels
         corner_margin = 15 # Don't detect edge clicks too close to a corner
 
         on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
@@ -757,7 +766,7 @@ class ImageViewer(QWidget):
         
     def _get_page_split_handle_at(self, pos):
         for handle, rect in self.page_split_handles.items():
-            if rect.adjusted(-4, -4, 4, 4).contains(pos):
+            if rect.adjusted(-8, -8, 8, 8).contains(pos):
                 return handle
         return None
 
@@ -864,7 +873,7 @@ class ImageViewer(QWidget):
             painter.drawRect(rect)
 
     def _draw_page_splitting_ui(self, painter, pixmap_rect):
-        if self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty():
+        if self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty() or not self.current_layout_ratios:
             return
 
         left_enabled = self.current_layout_ratios.get('left_enabled', True)

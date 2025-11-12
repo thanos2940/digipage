@@ -97,23 +97,53 @@ class SingleSplitModeWidget(QWidget):
         self.on_layout_changed()
 
     def _on_toggle_clicked(self):
-        """Handles the logic when a page toggle is clicked."""
+        """
+        Handles the logic when a page toggle is clicked.
+        This method immediately updates the layout, shows/hides the crop area,
+        and triggers the worker to create or delete the cropped image file.
+        """
         self._update_toggle_styles()
 
         if not self._current_image_path:
             return
 
-        sender = self.sender()
-        if sender == self.left_page_toggle and not self.left_page_toggle.isChecked():
-            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "left")
-        elif sender == self.right_page_toggle and not self.right_page_toggle.isChecked():
-            self.main_window.scan_worker.delete_split_artifact(self._current_image_path, "right")
+        # Get the current layout from the viewer; if it's not there, get the default.
+        current_layout = self.viewer.get_layout_ratios()
+        if not current_layout:
+            # This can happen if the layout hasn't been initialized yet.
+            # We can try to get it from the image data, which will establish a default if needed.
+            layout_from_storage = self.get_layout_for_image(self._current_image_path)
+            if layout_from_storage:
+                self.viewer.set_layout_ratios(layout_from_storage)
+                current_layout = layout_from_storage
+            else:
+                # If there's still no layout, we can't proceed.
+                return
+
+        # Update the layout data based on which toggle was clicked
+        current_layout['left_enabled'] = self.left_page_toggle.isChecked()
+        current_layout['right_enabled'] = self.right_page_toggle.isChecked()
+
+        # 1. Immediately update the viewer's UI to show/hide the crop rect
+        self.viewer.set_layout_ratios(current_layout)
+
+        # 2. Trigger the worker to create/delete the cropped files
+        # The worker's perform_page_split handles both creation and deletion
+        self.main_window.perform_page_split(self._current_image_path, current_layout)
+
+        # 3. Save the updated layout data to the JSON file immediately.
+        # This ensures the toggle state is remembered when navigating away and back.
+        self.save_layout_data(self._current_image_path, current_layout)
+
+        # 4. The call to _update_toggle_styles() already enables the "Update" button
+        #    via on_layout_changed(), so the user can still save this as a
+        #    permanent layout change for subsequent images.
+
 
 
     def on_layout_changed(self):
         """Activates the update button when the user starts editing."""
         self.update_button.setEnabled(True)
-        self.main_window.is_actively_editing = True
 
     def on_update_clicked(self):
         """Saves the current layout and triggers the reprocessing of the image."""
@@ -136,6 +166,7 @@ class SingleSplitModeWidget(QWidget):
 
         # 3. Disable the button and editing state, as the action is complete
         self.update_button.setEnabled(False)
+        self.main_window.is_actively_editing = False
         self.main_window.is_actively_editing = False
 
         # 4. Show feedback to user

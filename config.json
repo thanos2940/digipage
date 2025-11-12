@@ -1,6 +1,6 @@
 {
-    "scan_folder": "C:/Users/user/Desktop/scan",
-    "todays_books_folder": "C:/Users/user/Desktop/ΒΙΒΛΙΑ ΗΜΕΡΑΣ",
+    "scan_folder": "D:/Desktop/Testing Scanner/scan",
+    "todays_books_folder": "D:/Desktop/Testing Scanner/ημερας",
     "city_paths": {
         "297": "Z:/ΥΦ Β΄ ΚΟΡΙΝΘΟΥ"
     },
@@ -14,5 +14,5 @@
     "theme": "Blue",
     "image_load_timeout_ms": 2000,
     "caching_enabled": true,
-    "scanner_mode": "dual_scan"
+    "scanner_mode": "single_split"
 }
