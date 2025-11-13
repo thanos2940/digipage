@@ -33,6 +33,7 @@ class SingleSplitModeWidget(QWidget):
         self.app_config = main_window.app_config
         self._current_image_path = None
         self._layout_data_path = None
+        self.is_dirty = False
 
         # --- Main UI ---
         main_layout = QVBoxLayout(self)
@@ -73,6 +74,11 @@ class SingleSplitModeWidget(QWidget):
         # --- Connections (to be handled by MainWindow)---
         self.viewer.layout_changed.connect(self.on_layout_changed)
         self.update_button.clicked.connect(self.on_update_clicked)
+        self.viewer.image_loaded_for_layout.connect(self.on_viewer_ready_for_layout)
+
+    def is_work_in_progress(self):
+        """Returns True if the user is editing or has unsaved changes."""
+        return self.main_window.is_actively_editing or self.is_dirty
 
     def _create_toggle_button(self, text):
         """Helper to create a styled, checkable button."""
@@ -144,6 +150,7 @@ class SingleSplitModeWidget(QWidget):
     def on_layout_changed(self):
         """Activates the update button when the user starts editing."""
         self.update_button.setEnabled(True)
+        self.is_dirty = True
 
     def on_update_clicked(self):
         """Saves the current layout and triggers the reprocessing of the image."""
@@ -166,7 +173,7 @@ class SingleSplitModeWidget(QWidget):
 
         # 3. Disable the button and editing state, as the action is complete
         self.update_button.setEnabled(False)
-        self.main_window.is_actively_editing = False
+        self.is_dirty = False
         self.main_window.is_actively_editing = False
 
         # 4. Show feedback to user
@@ -174,9 +181,10 @@ class SingleSplitModeWidget(QWidget):
             f"Ενημέρωση layout για {os.path.basename(self._current_image_path)}...", 3000
         )
 
-    def _apply_layout_after_load(self):
-        """Helper method to apply layout after image has loaded."""
-        if not self._current_image_path:
+    @Slot(str)
+    def on_viewer_ready_for_layout(self, image_path):
+        """Applies the correct layout once the viewer confirms the image is loaded."""
+        if image_path != self._current_image_path:
             return
 
         layout = self.get_layout_for_image(self._current_image_path)
@@ -188,17 +196,23 @@ class SingleSplitModeWidget(QWidget):
             self.left_page_toggle.setChecked(layout.get('left_enabled', True))
             self.right_page_toggle.setChecked(layout.get('right_enabled', True))
         else:
-            # No layout found - save the default one
+            # No layout found - get the default, save it, and trigger the first split
             default_layout = self.viewer.get_layout_ratios()
             if default_layout:
                 default_layout['left_enabled'] = True
                 default_layout['right_enabled'] = True
                 self.save_layout_data(self._current_image_path, default_layout)
+                self.viewer.set_layout_ratios(default_layout) # Apply the default to the view
                 # Also trigger the initial split for this first image
                 self.main_window.perform_page_split(self._current_image_path, default_layout)
 
         # Apply the correct visual style to the toggles
         self._update_toggle_styles()
+        # After applying the definitive layout, reset the dirty flag.
+        # Any subsequent change will set it back to True via on_layout_changed.
+        self.is_dirty = False
+        self.update_button.setEnabled(False)
+
 
     @Slot(str)
     def load_image(self, image_path):
@@ -206,11 +220,9 @@ class SingleSplitModeWidget(QWidget):
         self._current_image_path = image_path
         self.viewer.request_image_load(image_path)
         self.update_button.setEnabled(False)
+        self.is_dirty = False
         self.main_window.is_actively_editing = False
 
-        if image_path:
-            # Delayed layout application after image loads
-            QTimer.singleShot(200, self._apply_layout_after_load)
 
     def get_layout_for_image(self, image_path):
         """
