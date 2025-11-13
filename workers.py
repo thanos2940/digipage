@@ -239,6 +239,14 @@ class ScanWorker(QObject):
                 final_folder_path = os.path.join(scan_folder, 'final')
                 if os.path.isdir(final_folder_path):
                     shutil.rmtree(final_folder_path, ignore_errors=True)
+
+                # Delete the layout data file
+                layout_data_path = os.path.join(scan_folder, 'layout_data.json')
+                if os.path.exists(layout_data_path):
+                    try:
+                        os.remove(layout_data_path)
+                    except OSError:
+                        pass # Ignore if deletion fails
             
             self.file_operation_complete.emit("create_book", f"Το βιβλίο '{book_name}' δημιουργήθηκε.")
 

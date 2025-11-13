@@ -19,6 +19,7 @@ class ImageViewer(QWidget):
     Handles loading, displaying, scaling, panning, cropping, splitting, and animations.
     """
     load_requested = Signal(str, bool)
+    image_loaded_for_layout = Signal(str) # Emitted when the viewer is ready for a layout
     crop_adjustment_started = Signal()
     zoom_state_changed = Signal(bool)
     rotation_finished = Signal(str, float)
@@ -80,6 +81,11 @@ class ImageViewer(QWidget):
 
         self.loading_timer = QTimer(self)
         self.loading_timer.timeout.connect(self._update_loading_animation)
+        
+        self.loading_animation_delay_timer = QTimer(self)
+        self.loading_animation_delay_timer.setSingleShot(True)
+        self.loading_animation_delay_timer.setInterval(250)
+        self.loading_animation_delay_timer.timeout.connect(self._show_loading_animation)
 
     # --- Qt Properties for Animation ---
     def get_scan_line_progress(self):
@@ -112,8 +118,12 @@ class ImageViewer(QWidget):
         self._loading_path = None
         self.is_loading = False
         self.loading_timer.stop()
+        self.loading_animation_delay_timer.stop()
         self.pixmap = QPixmap()
         self.display_pixmap = QPixmap()
+        self.left_rect_widget = QRectF()
+        self.right_rect_widget = QRectF()
+        self.current_layout_ratios = None
         self.update()
 
     def request_image_load(self, path, force_reload=False, show_loading_animation=True):
@@ -124,13 +134,15 @@ class ImageViewer(QWidget):
             
         self._loading_path = path
 
-        self.pixmap = QPixmap()
-        self.display_pixmap = QPixmap()
+        # Stop any pending animations for the old image
+        self.loading_animation_delay_timer.stop()
+        self.is_loading = False
         
         if show_loading_animation:
-            self.is_loading = True
-            self.loading_timer.start(25)
+            self.loading_animation_delay_timer.start()
 
+        # Don't clear the old pixmap here. Instead, we'll do a direct swap in
+        # on_image_loaded to prevent a black flicker.
         self.update()
         
         if path is None:
@@ -138,32 +150,39 @@ class ImageViewer(QWidget):
         else:
             self.load_requested.emit(path, force_reload)
 
+    @Slot()
+    def _show_loading_animation(self):
+        """Activates the loading animation if the delay has passed."""
+        self.is_loading = True
+        self.loading_timer.start(25)
+        self.update()
+
     @Slot(str, QPixmap)
     def on_image_loaded(self, path, pixmap):
+        self.loading_animation_delay_timer.stop()
         self.is_loading = False
         self.loading_timer.stop()
 
         if path != self._loading_path:
             return
+
+        # Now we perform the swap. First, clear any old layout data.
+        self.left_rect_widget = QRectF()
+        self.right_rect_widget = QRectF()
+        self.current_layout_ratios = None
             
         self.pixmap = pixmap
         self.image_path = path 
         self._loading_path = None 
         self.rotation_angle = 0
 
-        # Store pending layout before it's potentially cleared by reset_view or other methods.
-        pending_layout = self._pending_layout_ratios
-        self._pending_layout_ratios = None
-
         self.reset_view()
 
         if not self.pixmap.isNull():
             if self.interaction_mode == InteractionMode.PAGE_SPLITTING:
-                if pending_layout:
-                    self.set_layout_ratios(pending_layout)
-                else:
-                    # This case can happen if it's the very first image
-                    self._initialize_default_layout()
+                # Tell the controller that the image is loaded and ready for a layout
+                self.image_loaded_for_layout.emit(path)
+            
             self._start_scan_line_animation()
     
         self.update()
@@ -259,13 +278,6 @@ class ImageViewer(QWidget):
             self.is_zoomed = False
             self.zoom_state_changed.emit(False)
             self.reset_view()
-
-            if not self.pixmap.isNull():
-                if self._pending_layout_ratios:
-                    self.set_layout_ratios(self._pending_layout_ratios)
-                    self._pending_layout_ratios = None
-                else:
-                    self._initialize_default_layout()
         else:
             self.interaction_mode = InteractionMode.CROPPING
             self.reset_view()
@@ -282,7 +294,11 @@ class ImageViewer(QWidget):
 
         pixmap_rect = self._get_pixmap_rect_in_widget()
         if pixmap_rect.isEmpty() or not layout_data:
-            self._initialize_default_layout()
+            # When no layout is provided, ensure the view is blank
+            self.left_rect_widget = QRectF()
+            self.right_rect_widget = QRectF()
+            self.current_layout_ratios = None
+            self.update()
             return
 
         self.current_layout_ratios = layout_data
@@ -311,7 +327,23 @@ class ImageViewer(QWidget):
         """
         pixmap_rect = self._get_pixmap_rect_in_widget()
         if pixmap_rect.isEmpty() or self.left_rect_widget.isEmpty() or self.right_rect_widget.isEmpty():
-            return None
+            # If we don't have a layout, return the default one based on current view
+            if self.pixmap.isNull(): return None
+            
+            rect_h = 0.95
+            rect_y = (1.0 - rect_h) / 2
+
+            left_w = 0.46
+            left_x = 0.02
+
+            right_w = 0.46
+            right_x = 1.0 - 0.46 - 0.02
+            
+            return {
+                'left': {'x': left_x, 'y': rect_y, 'w': left_w, 'h': rect_h},
+                'right': {'x': right_x, 'y': rect_y, 'w': right_w, 'h': rect_h}
+            }
+
 
         def get_ratios(widget_rect):
             if pixmap_rect.width() == 0 or pixmap_rect.height() == 0:
@@ -469,6 +501,7 @@ class ImageViewer(QWidget):
             
             if self.active_handle:
                 self.last_mouse_pos = event.pos()
+                self.crop_adjustment_started.emit()
 
     def mouseMoveEvent(self, event):
         if not self.active_handle:
@@ -500,14 +533,12 @@ class ImageViewer(QWidget):
         delta = QPointF(event.pos() - self.last_mouse_pos)
         
         if self.active_handle == "rotate":
-            self.crop_adjustment_started.emit()
             sensitivity = 90.0 / self.width() 
             dx = event.pos().x() - self.drag_start_pos.x()
             self.rotation_angle = self.rotation_on_press + dx * sensitivity
             self.rotation_angle = max(-45.0, min(45.0, self.rotation_angle))
         elif self.active_handle == "split_line":
             self.is_dragging_split_line = True
-            self.crop_adjustment_started.emit()
             pixmap_rect = self._get_pixmap_rect_in_widget()
             if pixmap_rect.width() > 0:
                 self.split_line_x_ratio += delta.x() / pixmap_rect.width()
@@ -516,10 +547,8 @@ class ImageViewer(QWidget):
             self.pan_offset += delta
             self._clamp_pan_offset()
         elif self.active_handle in self.crop_handles.keys() or self.active_handle == "move":
-            self.crop_adjustment_started.emit()
             self._move_crop_handle(delta)
         elif self.active_handle and ('left_' in self.active_handle or 'right_' in self.active_handle):
-            self.crop_adjustment_started.emit()
             self.layout_changed.emit()
             self._move_page_split_handle(self.active_handle, delta)
         
@@ -623,9 +652,6 @@ class ImageViewer(QWidget):
                 # Re-apply the last known layout instead of resetting to default
                 if self.current_layout_ratios:
                     self.set_layout_ratios(self.current_layout_ratios)
-                else:
-                    # Fallback if no layout was ever set
-                    self._initialize_default_layout()
 
             self._update_display_pixmap()
 
@@ -677,26 +703,13 @@ class ImageViewer(QWidget):
         }
 
     def _get_handle_at(self, pos):
-        # Prioritize corners for diagonal resize
-        for handle, rect in self.crop_handles.items():
-            # Inflate corner rects slightly for easier grabbing
-            if rect.adjusted(-8, -8, 8, 8).contains(pos):
-                return handle
+        handle = self._get_handle_for_rect(pos, self.crop_rect_widget)
+        if handle:
+            return handle
 
-        # If no corner was hit, check the edges for horizontal/vertical resize
-        r = self.crop_rect_widget
-        tolerance = 12  # Click tolerance in pixels
-        corner_margin = 15 # Don't detect edge clicks too close to a corner
-
-        on_top = abs(pos.y() - r.top()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
-        on_bottom = abs(pos.y() - r.bottom()) < tolerance and r.left() + corner_margin < pos.x() < r.right() - corner_margin
-        on_left = abs(pos.x() - r.left()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
-        on_right = abs(pos.x() - r.right()) < tolerance and r.top() + corner_margin < pos.y() < r.bottom() - corner_margin
-
-        if on_top: return "top"
-        if on_bottom: return "bottom"
-        if on_left: return "left"
-        if on_right: return "right"
+        # If not on a handle but inside the rect, it's a move.
+        if self.crop_rect_widget.contains(pos):
+            return "move"
 
         return None
         
@@ -765,9 +778,15 @@ class ImageViewer(QWidget):
         return QRectF(handle_x - handle_size/2, slider_y - handle_size/2, handle_size, handle_size)
         
     def _get_page_split_handle_at(self, pos):
-        for handle, rect in self.page_split_handles.items():
-            if rect.adjusted(-8, -8, 8, 8).contains(pos):
-                return handle
+        # Check right rect first, as it may be on top
+        handle = self._get_handle_for_rect(pos, self.right_rect_widget, prefix="right_")
+        if handle:
+            return handle
+            
+        handle = self._get_handle_for_rect(pos, self.left_rect_widget, prefix="left_")
+        if handle:
+            return handle
+
         return None
 
     def _move_page_split_handle(self, handle, delta):
@@ -836,6 +855,43 @@ class ImageViewer(QWidget):
 
         # The old logic is now replaced by the pre-clamping
         self._update_page_split_handles()
+
+    def _get_handle_for_rect(self, pos, rect, prefix=""):
+        """
+        Determines which handle or side of a rectangle is at a given position.
+        Returns the handle name (e.g., 'top_left', 'left') or None.
+        """
+        side_tolerance = 20
+        corner_tolerance = 25
+
+        # Check corners first, as they have priority.
+        is_near_top = abs(pos.y() - rect.top()) < corner_tolerance
+        is_near_bottom = abs(pos.y() - rect.bottom()) < corner_tolerance
+        is_near_left = abs(pos.x() - rect.left()) < corner_tolerance
+        is_near_right = abs(pos.x() - rect.right()) < corner_tolerance
+
+        if is_near_top and is_near_left: return f"{prefix}top_left"
+        if is_near_top and is_near_right: return f"{prefix}top_right"
+        if is_near_bottom and is_near_left: return f"{prefix}bottom_left"
+        if is_near_bottom and is_near_right: return f"{prefix}bottom_right"
+
+        # Then check for sides, but only if not at a corner.
+        # This ensures that dragging the edge of the crop area is prioritized over panning.
+        is_on_top_side = abs(pos.y() - rect.top()) < side_tolerance
+        is_on_bottom_side = abs(pos.y() - rect.bottom()) < side_tolerance
+        is_on_left_side = abs(pos.x() - rect.left()) < side_tolerance
+        is_on_right_side = abs(pos.x() - rect.right()) < side_tolerance
+        
+        # Check that the position is within the perpendicular bounds of the side.
+        in_horizontal_bounds = rect.left() - side_tolerance < pos.x() < rect.right() + side_tolerance
+        in_vertical_bounds = rect.top() - side_tolerance < pos.y() < rect.bottom() + side_tolerance
+
+        if is_on_top_side and in_horizontal_bounds: return f"{prefix}top"
+        if is_on_bottom_side and in_horizontal_bounds: return f"{prefix}bottom"
+        if is_on_left_side and in_vertical_bounds: return f"{prefix}left"
+        if is_on_right_side and in_vertical_bounds: return f"{prefix}right"
+
+        return None
 
     # --- Drawing Methods ---
     def _draw_loading_animation(self, painter):

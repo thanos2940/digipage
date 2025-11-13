@@ -629,7 +629,11 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(500, lambda p=path: self.image_processor.auto_process_image(p, auto_light, auto_color))
 
             # --- UI Navigation ---
-            if not self.is_actively_editing:
+            work_in_progress = self.is_actively_editing
+            if scanner_mode == "single_split" and isinstance(self.current_ui_mode, SingleSplitModeWidget):
+                work_in_progress = self.current_ui_mode.is_work_in_progress()
+
+            if not work_in_progress:
                 self.update_timer.start()
             
             self._check_and_update_jump_button_animation()
