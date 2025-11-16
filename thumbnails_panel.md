@@ -12,7 +12,53 @@ The thumbnail\_widgets.py file (using QScrollArea and a QVBoxLayout) represents 
 
 **This report details a new, high-performance implementation plan based on Qt's Model/View/Delegate architecture.** This approach achieves all goals from new\_features.md (virtual scrolling, asynchronous loading, split-mode support) in a robust, industry-standard, and memory-efficient way.
 
-2\. Core Architecture: Model/View/Delegate
+2\. Guiding Design Principles
+-----------------------------
+
+This implementation plan is guided by several core engineering and design principles to ensure a high-quality, scalable, and maintainable feature.
+
+*   **Performance First (Algorithmic Choice):** The most critical decision is the rejection of the QScrollArea approach.
+    
+    *   **Problem:** The QScrollArea method has O(n) complexity. Loading 1,000 images requires creating ~2,000 QLabel widgets, causing a massive UI freeze and high memory consumption.
+        
+    *   **Solution:** The **Model/View/Delegate** architecture provides O(1) complexity. The QListView (View) is virtualized, meaning it only creates renderers for the ~15 items visible on screen. Scrolling is instantaneous, whether there are 100 or 10,000 items. This is the professional standard for high-performance lists in Qt.
+        
+*   **Asynchronous & Non-Blocking (UI Responsiveness):** The UI thread _must never_ be blocked by I/O (like loading or processing an image).
+    
+    *   **Problem:** Naively loading a thumbnail in the paint() event would freeze the UI during scroll.
+        
+    *   **Solution:** We use a **signal/slot-based worker system**.
+        
+        1.  **Delegate (UI Thread):** Sees a placeholder. Emits a request\_thumbnail signal (a non-blocking call).
+            
+        2.  **ImageProcessor (Worker Thread):** Catches the signal, loads the image from disk, and generates the thumbnail _in the background_.
+            
+        3.  **UI Thread:** ImageProcessor emits thumbnail\_ready. The ThumbnailListWidget catches this and updates the _data_ in the Model.
+            
+    *   This flow ensures the UI remains perfectly smooth and responsive at all times, even while hundreds of thumbnails are loading.
+        
+*   **Separation of Concerns (Maintainability):** A clear architecture is easier to debug and extend.
+    
+    *   **Model:** Knows _nothing_ about visuals. It only manages data (paths, indices, pixmaps).
+        
+    *   **View:** Knows _nothing_ about the data or how to draw it. It only manages scrolling and item layout.
+        
+    *   **Delegate:** Knows _nothing_ about the full dataset. It only knows how to _paint one item_ when the View asks it to.
+        
+    *   This separation makes it simple to change the "look" (by editing only the Delegate) without breaking the data logic (Model) or the view's behavior.
+        
+*   **Intentional Design (Material You 3):** The delegate acts as a custom "canvas" that allows us to fully implement M3 principles.
+    
+    *   **Color:** We can directly use the theme's PRIMARY\_CONTAINER color for selection, OUTLINE for borders, etc., ensuring visual consistency.
+        
+    *   **Shape:** The drawRoundedRect in the delegate directly applies the M3 principle of using rounded corners (e.g., 8pt) for components.
+        
+    *   **Typography:** The delegate has full control over font, size, and color for placeholder text, aligning with the M3 type scale.
+        
+*   **Pythonic & Readable Code:** The plan uses clear, self-documenting names (e.g., ROLE\_PAIR\_INDEX, on\_request\_split\_thumbnail) and Python's PriorityQueue for efficient task management, adhering to PEP 8 and clean code practices.
+    
+
+3\. Core Architecture: Model/View/Delegate
 ------------------------------------------
 
 Instead of building a list of heavy QWidgets, we will use Qt's native virtualization.
@@ -26,7 +72,7 @@ Instead of building a list of heavy QWidgets, we will use Qt's native virtualiza
 
 This separation is the key to performance. With 10,000 images, the Model holds 10,000 data entries (very fast), but the View only creates and renders the ~15 items visible in the scroll area (also very fast).
 
-3\. Implementation Plan
+4\. Implementation Plan
 -----------------------
 
 This plan is broken into five parts, from the data structure to the final integration.
