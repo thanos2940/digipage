@@ -892,12 +892,12 @@ class ImageProcessor(QObject):
                         crop_box = (w // 2, 0, w, h)
                     cropped = img.crop(crop_box)
                     cropped.thumbnail((90, 110), Image.Resampling.LANCZOS)
-                    q_img = ImageQt.ImageQt(cropped.convert('RGB'))
+                    q_img = ImageQt(cropped.convert('RGB'))
                     thumb_pixmap = QPixmap.fromImage(q_img)
                 else:
                     # Dual-scan: simple thumbnail
                     img.thumbnail((90, 110), Image.Resampling.LANCZOS)
-                    q_img = ImageQt.ImageQt(img.convert('RGB'))
+                    q_img = ImageQt(img.convert('RGB'))
                     thumb_pixmap = QPixmap.fromImage(q_img)
                 # Cache and emit
                 if thumb_pixmap:
