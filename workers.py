@@ -17,7 +17,7 @@ from watchdog.events import FileSystemEventHandler, FileDeletedEvent, FileMovedE
 
 # Use PIL imports directly
 from PIL import Image, ImageOps, ImageFilter
-from PIL.ImageQt import ImageQt
+from PIL import ImageQt
 
 import config
 
@@ -807,28 +807,112 @@ class Watcher(QObject):
 
 # --- ImageProcessor ---
 import psutil # Added for memory monitoring (Issue 7.1)
+from PySide6.QtCore import QModelIndex
+from queue import PriorityQueue
+from thumbnail_widgets import ROLE_PATH_1, ROLE_SCANNER_MODE
+
 class ImageProcessor(QObject):
-# ... (rest of ImageProcessor remains unchanged)
     image_loaded = Signal(str, QPixmap)
     processing_complete = Signal(str)
-    thumbnail_loaded = Signal(int, str, QPixmap)
+    thumbnail_ready = Signal(QModelIndex, str, QPixmap)
     error = Signal(str)
 
     def __init__(self):
         super().__init__()
-        self._pixmap_cache = {}  # Changed to dict (Issue 1.2 Fix)
-        self._cache_access_order = []  # List of (path, size_bytes)
+        self._pixmap_cache = {}
+        self._cache_access_order = []
         self._caching_enabled = True
-        
-        # Fixed cache size is replaced by a max memory limit
-        self.MAX_CACHE_BYTES = 500 * 1024 * 1024  # 500MB (Issue 1.2 Fix)
+        self.MAX_CACHE_BYTES = 500 * 1024 * 1024
         self._current_cache_bytes = 0
 
-        # Memory Pressure Monitor (Issue 7.1 Fix)
+        # Thumbnail Cache (Tier 2)
+        self._thumbnail_cache = {} # path -> QPixmap
+        self.MAX_THUMBNAIL_CACHE = 200 # Can be tuned
+        # Thumbnail Generation Queue
+        self._thumbnail_queue = PriorityQueue() # (priority, timestamp, QModelIndex, path, side)
+        # Start the dedicated thumbnail processor
+        self.thumbnail_processor = QTimer(self)
+        self.thumbnail_processor.setInterval(20) # Process queue frequently
+        self.thumbnail_processor.timeout.connect(self._process_thumbnail_queue)
+        self.thumbnail_processor.start()
+
+        # Memory Pressure Monitor
         self._memory_monitor_timer = QTimer()
         self._memory_monitor_timer.setInterval(5000)
         self._memory_monitor_timer.timeout.connect(self._check_memory_pressure)
         self._memory_monitor_timer.start()
+
+    # --- NEW SLOTS ---
+    @Slot(QModelIndex, str)
+    def on_request_thumbnail(self, index, path):
+        """Slot for dual-scan thumbnail requests."""
+        if path in self._thumbnail_cache:
+            # It's cached! Emit immediately.
+            side = "left" if index.data(ROLE_PATH_1) == path else "right"
+            self.thumbnail_ready.emit(index, side, self._thumbnail_cache[path])
+            return
+        # Prioritize based on visibility (lower row = higher priority)
+        priority = index.row()
+        side = "left" if index.data(ROLE_PATH_1) == path else "right"
+        self._thumbnail_queue.put((priority, time.time(), index, path, side))
+
+    @Slot(QModelIndex, str, str)
+    def on_request_split_thumbnail(self, index, side, source_path):
+        """Slot for single-split thumbnail requests."""
+        cache_key = f"{source_path}_{side}"
+        if cache_key in self._thumbnail_cache:
+            self.thumbnail_ready.emit(index, side, self._thumbnail_cache[cache_key])
+            return
+        priority = index.row()
+        self._thumbnail_queue.put((priority, time.time(), index, source_path, side))
+
+    @Slot()
+    def _process_thumbnail_queue(self):
+        """Processes one item from the thumbnail queue."""
+        if self._thumbnail_queue.empty():
+            return
+        try:
+            priority, timestamp, index, path, side = self._thumbnail_queue.get()
+            # Check cache again (another request might have loaded it)
+            cache_key = f"{path}_{side}" if index.data(ROLE_SCANNER_MODE) == "single_split" else path
+            if cache_key in self._thumbnail_cache:
+                self.thumbnail_ready.emit(index, side, self._thumbnail_cache[cache_key])
+                return
+            # --- Generation Logic ---
+            with Image.open(path) as img:
+                thumb_pixmap = None
+                if index.data(ROLE_SCANNER_MODE) == "single_split":
+                    # Get layout data (This is complex, assumes layout is available)
+                    # For now, we'll just crop to halves as a placeholder
+                    # A real implementation needs to fetch layout data first
+                    w, h = img.size
+                    if side == "left":
+                        crop_box = (0, 0, w // 2, h)
+                    else:
+                        crop_box = (w // 2, 0, w, h)
+                    cropped = img.crop(crop_box)
+                    cropped.thumbnail((90, 110), Image.Resampling.LANCZOS)
+                    q_img = ImageQt.ImageQt(cropped.convert('RGB'))
+                    thumb_pixmap = QPixmap.fromImage(q_img)
+                else:
+                    # Dual-scan: simple thumbnail
+                    img.thumbnail((90, 110), Image.Resampling.LANCZOS)
+                    q_img = ImageQt.ImageQt(img.convert('RGB'))
+                    thumb_pixmap = QPixmap.fromImage(q_img)
+                # Cache and emit
+                if thumb_pixmap:
+                    self._thumbnail_cache[cache_key] = thumb_pixmap
+                    # Evict old items if cache is full
+                    if len(self._thumbnail_cache) > self.MAX_THUMBNAIL_CACHE:
+                        self._thumbnail_cache.pop(next(iter(self._thumbnail_cache)))
+                    self.thumbnail_ready.emit(index, side, thumb_pixmap)
+        except Exception as e:
+            print(f"Thumbnail generation failed for {path}: {e}")
+            # Optionally emit a "failed" signal
+
+    @Slot()
+    def stop(self):
+        self.thumbnail_processor.stop()
 
     @Slot(bool)
     def set_caching_enabled(self, enabled):
