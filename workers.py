@@ -535,6 +535,10 @@ class ScanWorker(QObject):
                 # Crop and save the left page only if it's enabled
                 if layout_data.get('left_enabled', True):
                     left_page = img.crop(left_box)
+                    angle_left = layout_data.get('rotation_left', 0.0)
+                    if angle_left != 0.0:
+                        # Pillow rotates counter-clockwise
+                        left_page = left_page.rotate(-angle_left, resample=Image.BICUBIC, expand=True)
                     left_page.save(left_out_path)
                 elif os.path.exists(left_out_path):
                     os.remove(left_out_path) # Remove if it exists and is now disabled
@@ -542,6 +546,9 @@ class ScanWorker(QObject):
                 # Crop and save the right page only if it's enabled
                 if layout_data.get('right_enabled', True):
                     right_page = img.crop(right_box)
+                    angle_right = layout_data.get('rotation_right', 0.0)
+                    if angle_right != 0.0:
+                        right_page = right_page.rotate(-angle_right, resample=Image.BICUBIC, expand=True)
                     right_page.save(right_out_path)
                 elif os.path.exists(right_out_path):
                     os.remove(right_out_path) # Remove if it exists and is now disabled
