@@ -12,6 +12,7 @@ class InteractionMode:
     PANNING = 3
     ROTATING = 4
     PAGE_SPLITTING = 5
+    PAGE_SPLIT_ROTATING = 6
 
 class ImageViewer(QWidget):
     """
@@ -25,6 +26,7 @@ class ImageViewer(QWidget):
     rotation_finished = Signal(str, float)
     layout_changed = Signal()
     crop_adjustment_finished = Signal()
+    rotation_changed_by_drag = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +65,8 @@ class ImageViewer(QWidget):
         self.page_split_handles = {}
         self._pending_layout_ratios = None
         self.current_layout_ratios = None
+        self.rotating_page = None # 'left' or 'right'
+        self.rotation_on_press_page = 0.0
 
         # Animation properties
         self._scan_line_progress = 0.0
@@ -233,6 +237,17 @@ class ImageViewer(QWidget):
             self._enter_cropping_mode()
         
         self.update()
+
+    def set_page_split_rotating_mode(self, page, enabled):
+        if self.pixmap.isNull():
+            return
+        if enabled:
+            self.interaction_mode = InteractionMode.PAGE_SPLIT_ROTATING
+            self.rotating_page = page
+        else:
+            self.interaction_mode = InteractionMode.PAGE_SPLITTING
+            self.rotating_page = None
+        self.update()
         
     def set_rotating_mode(self, enabled):
         if self.pixmap.isNull(): return
@@ -341,7 +356,9 @@ class ImageViewer(QWidget):
             
             return {
                 'left': {'x': left_x, 'y': rect_y, 'w': left_w, 'h': rect_h},
-                'right': {'x': right_x, 'y': rect_y, 'w': right_w, 'h': rect_h}
+                'right': {'x': right_x, 'y': rect_y, 'w': right_w, 'h': rect_h},
+                'rotation_left': 0.0,
+                'rotation_right': 0.0
             }
 
 
@@ -409,6 +426,9 @@ class ImageViewer(QWidget):
                         self._draw_cropping_ui(painter, pixmap_rect_unrotated)
                     elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
                         self._draw_page_splitting_ui(painter, pixmap_rect_unrotated)
+                    elif self.interaction_mode == InteractionMode.PAGE_SPLIT_ROTATING:
+                        self._draw_page_splitting_ui(painter, pixmap_rect_unrotated)
+                        self._draw_page_split_rotation_ui(painter)
 
             if self.scan_line_animation.state() == QPropertyAnimation.Running:
                 self._draw_border_animation(painter, pixmap_rect_unrotated)
@@ -498,7 +518,21 @@ class ImageViewer(QWidget):
                         self.active_handle = "left_move"
                     elif self.right_rect_widget.contains(event.pos()):
                         self.active_handle = "right_move"
-            
+                    else:
+                        # Check for edge drag for rotation
+                        if self._is_on_rect_edge(event.pos(), self.left_rect_widget):
+                            self.active_handle = "left_edge_rotate"
+                        elif self._is_on_rect_edge(event.pos(), self.right_rect_widget):
+                            self.active_handle = "right_edge_rotate"
+
+            elif self.interaction_mode == InteractionMode.PAGE_SPLIT_ROTATING:
+                handle_rect = self._get_page_split_rotation_handle_rect()
+                if handle_rect.contains(event.pos()):
+                    self.active_handle = "page_split_rotate"
+                    key = f"rotation_{self.rotating_page}"
+                    self.rotation_on_press_page = self.current_layout_ratios.get(key, 0.0)
+                    self.drag_start_pos = event.pos()
+
             if self.active_handle:
                 self.last_mouse_pos = event.pos()
                 self.crop_adjustment_started.emit()
@@ -518,9 +552,15 @@ class ImageViewer(QWidget):
                     elif handle in ["top", "bottom"]: cursor = Qt.SizeVerCursor
                     elif handle in ["left", "right"]: cursor = Qt.SizeHorCursor
                 elif self.interaction_mode == InteractionMode.PAGE_SPLITTING:
-                    handle = self._get_page_split_handle_at(event.pos())
-                    if handle:
-                        if "top_left" in handle or "bottom_right" in handle: cursor = Qt.SizeFDiagCursor
+                    if self._is_on_rect_edge(event.pos(), self.left_rect_widget) or self._is_on_rect_edge(event.pos(), self.right_rect_widget):
+                        cursor = Qt.CrossCursor # Using CrossCursor as a stand-in for a rotate cursor
+                    else:
+                        handle = self._get_page_split_handle_at(event.pos())
+                        if handle:
+                            if "top_left" in handle or "bottom_right" in handle: cursor = Qt.SizeFDiagCursor
+                elif self.interaction_mode == InteractionMode.PAGE_SPLIT_ROTATING:
+                    if self._get_page_split_rotation_handle_rect().contains(event.pos()):
+                        cursor = Qt.SizeHorCursor
                         elif "top_right" in handle or "bottom_left" in handle: cursor = Qt.SizeBDiagCursor
                         elif "top" in handle or "bottom" in handle: cursor = Qt.SizeVerCursor
                         elif "left" in handle or "right" in handle: cursor = Qt.SizeHorCursor
@@ -537,6 +577,35 @@ class ImageViewer(QWidget):
             dx = event.pos().x() - self.drag_start_pos.x()
             self.rotation_angle = self.rotation_on_press + dx * sensitivity
             self.rotation_angle = max(-45.0, min(45.0, self.rotation_angle))
+        elif self.active_handle == "page_split_rotate":
+            if self.rotating_page:
+                sensitivity = 90.0 / (self.width() * 0.6) # Sensitivity based on slider width
+                dx = event.pos().x() - self.drag_start_pos.x()
+                new_angle = self.rotation_on_press_page + dx * sensitivity
+                new_angle = max(-45.0, min(45.0, new_angle))
+
+                key = f"rotation_{self.rotating_page}"
+                self.current_layout_ratios[key] = new_angle
+                self.layout_changed.emit()
+        elif self.active_handle in ["left_edge_rotate", "right_edge_rotate"]:
+            rect = self.left_rect_widget if self.active_handle == "left_edge_rotate" else self.right_rect_widget
+            center = rect.center()
+
+            vec_start = self.last_mouse_pos - center
+            vec_end = event.pos() - center
+
+            angle_start = math.atan2(vec_start.y(), vec_start.x())
+            angle_end = math.atan2(vec_end.y(), vec_end.x())
+
+            angle_delta_rad = angle_end - angle_start
+            angle_delta_deg = math.degrees(angle_delta_rad)
+
+            key = 'rotation_left' if self.active_handle == "left_edge_rotate" else 'rotation_right'
+            current_angle = self.current_layout_ratios.get(key, 0.0)
+            new_angle = current_angle + angle_delta_deg
+            self.current_layout_ratios[key] = new_angle
+            self.layout_changed.emit()
+
         elif self.active_handle == "split_line":
             self.is_dragging_split_line = True
             pixmap_rect = self._get_pixmap_rect_in_widget()
@@ -564,6 +633,12 @@ class ImageViewer(QWidget):
                 if abs(self.rotation_angle) > 0.1: 
                     self.rotation_finished.emit(self.image_path, self.rotation_angle)
                 self.is_dragging_rotate_handle = False
+
+            if self.active_handle == "page_split_rotate":
+                self.layout_changed.emit() # Ensure final value is emitted
+
+            if self.active_handle in ["left_edge_rotate", "right_edge_rotate"]:
+                self.rotation_changed_by_drag.emit()
 
             if self.active_handle and ('left_' in self.active_handle or 'right_' in self.active_handle):
                  self.layout_changed.emit()
@@ -856,6 +931,20 @@ class ImageViewer(QWidget):
         # The old logic is now replaced by the pre-clamping
         self._update_page_split_handles()
 
+    def _is_on_rect_edge(self, pos, rect):
+        """Checks if a point is close to the boundary of a rectangle."""
+        if rect.contains(pos):
+            return False # Inside, not on edge
+
+        path = QPainterPath()
+        path.addRect(rect)
+
+        stroker = QPainterPathStroker()
+        stroker.setWidth(30) # 30px tolerance around the edge
+        stroke = stroker.createStroke(path)
+
+        return stroke.contains(pos)
+
     def _get_handle_for_rect(self, pos, rect, prefix=""):
         """
         Determines which handle or side of a rectangle is at a given position.
@@ -892,6 +981,65 @@ class ImageViewer(QWidget):
         if is_on_right_side and in_vertical_bounds: return f"{prefix}right"
 
         return None
+
+    def _get_page_split_rotation_handle_rect(self):
+        if not self.rotating_page or not self.current_layout_ratios:
+            return QRectF()
+
+        key = f"rotation_{self.rotating_page}"
+        angle = self.current_layout_ratios.get(key, 0.0)
+
+        slider_width = self.width() * 0.6
+        slider_x = (self.width() - slider_width) / 2
+
+        # Position the slider centrally below the selected rectangle
+        rect_to_rotate = self.left_rect_widget if self.rotating_page == 'left' else self.right_rect_widget
+        slider_y = rect_to_rotate.bottom() + 60
+
+        handle_pos_ratio = (angle + 45) / 90.0
+        handle_x = slider_x + slider_width * handle_pos_ratio
+
+        handle_size = 24
+        return QRectF(handle_x - handle_size/2, slider_y - handle_size/2, handle_size, handle_size)
+
+    def _draw_page_split_rotation_ui(self, painter):
+        if not self.rotating_page or not self.current_layout_ratios:
+            return
+
+        key = f"rotation_{self.rotating_page}"
+        angle = self.current_layout_ratios.get(key, 0.0)
+
+        rect_to_rotate = self.left_rect_widget if self.rotating_page == 'left' else self.right_rect_widget
+
+        # Draw a highlight border around the selected crop area
+        painter.setPen(QPen(self.accent_color, 4, Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect_to_rotate)
+
+        # --- Draw Slider ---
+        slider_width = self.width() * 0.6
+        slider_height = 4
+        slider_x = (self.width() - slider_width) / 2
+        slider_y = rect_to_rotate.bottom() + 60 # Position below the rectangle
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(self.tertiary_color).lighter(120))
+        painter.drawRoundedRect(QRectF(slider_x, slider_y - slider_height/2, slider_width, slider_height), 2, 2)
+
+        # Center marker
+        painter.setBrush(QColor(self.accent_color))
+        painter.drawRect(QRectF(self.width()/2 - 1, slider_y - 8, 2, 16))
+
+        # --- Draw Handle and Text ---
+        handle_rect = self._get_page_split_rotation_handle_rect()
+        painter.setBrush(self.accent_color)
+        painter.drawEllipse(handle_rect)
+
+        font = painter.font(); font.setBold(True); font.setPointSize(10)
+        painter.setFont(font)
+        painter.setPen(self.accent_color)
+        painter.drawText(QRectF(0, handle_rect.bottom(), self.width(), 20), Qt.AlignCenter, f"{angle:.1f}°")
+
 
     # --- Drawing Methods ---
     def _draw_loading_animation(self, painter):
@@ -949,19 +1097,35 @@ class ImageViewer(QWidget):
 
         # --- Left (Green) ---
         if left_enabled:
+            painter.save()
+            angle_left = self.current_layout_ratios.get('rotation_left', 0.0)
+            center_left = self.left_rect_widget.center()
+            painter.translate(center_left)
+            painter.rotate(angle_left)
+            painter.translate(-center_left)
+
             left_fill = QColor("#4EBB51"); left_fill.setAlpha(20)
             painter.fillRect(self.left_rect_widget, left_fill)
             painter.setPen(QPen(QColor("#4CAF50"), 3, Qt.SolidLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.left_rect_widget)
+            painter.restore()
 
         # --- Right (Red) ---
         if right_enabled:
+            painter.save()
+            angle_right = self.current_layout_ratios.get('rotation_right', 0.0)
+            center_right = self.right_rect_widget.center()
+            painter.translate(center_right)
+            painter.rotate(angle_right)
+            painter.translate(-center_right)
+
             right_fill = QColor("#F44336"); right_fill.setAlpha(20)
             painter.fillRect(self.right_rect_widget, right_fill)
             painter.setPen(QPen(QColor("#F44336"), 3, Qt.SolidLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.right_rect_widget)
+            painter.restore()
 
         # --- Handles ---
         painter.setPen(Qt.NoPen)
