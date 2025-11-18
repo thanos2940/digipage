@@ -1,191 +1,188 @@
 # In thumbnail_widgets.py
-import os
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
-    QSizePolicy
-)
-from PySide6.QtCore import Qt, Signal, Slot, QSize, QEvent, QTimer # <-- ADD QTimer HERE
+from PySide6.QtWidgets import QListView, QStyledItemDelegate, QStyle
+from PySide6.QtCore import Signal, Slot, QModelIndex, QSize, Qt, QRect
 from PySide6.QtGui import QPixmap, QPainter, QColor
+import config
 
+# Define custom data roles for our model
+THUMBNAIL_ROLE_BASE = Qt.UserRole
+ROLE_PAIR_INDEX = THUMBNAIL_ROLE_BASE + 1       # The pair index (0, 1, 2...)
+ROLE_SCANNER_MODE = THUMBNAIL_ROLE_BASE + 2     # "dual_scan" or "single_split"
+ROLE_IS_SELECTED = THUMBNAIL_ROLE_BASE + 3      # bool
+# --- For Image 1 (Left/Source) ---
+ROLE_PATH_1 = THUMBNAIL_ROLE_BASE + 4           # Full file path
+ROLE_INDEX_1 = THUMBNAIL_ROLE_BASE + 5          # Original image index (e.g., 0, 2, 4...)
+ROLE_PIXMAP_1 = THUMBNAIL_ROLE_BASE + 6         # The loaded QPixmap thumbnail
+ROLE_IS_LOADING_1 = THUMBNAIL_ROLE_BASE + 7     # bool
+# --- For Image 2 (Right) ---
+ROLE_PATH_2 = THUMBNAIL_ROLE_BASE + 8           # Full file path (if dual_scan)
+ROLE_INDEX_2 = THUMBNAIL_ROLE_BASE + 9          # Original image index (e.g., 1, 3, 5...)
+ROLE_PIXMAP_2 = THUMBNAIL_ROLE_BASE + 10        # The loaded QPixmap thumbnail
+ROLE_IS_LOADING_2 = THUMBNAIL_ROLE_BASE + 11    # bool
 
-class ThumbnailPairWidget(QFrame):
-    """
-    A widget to display a pair of thumbnails (or a single one).
-    It handles selection styling and emits a signal when clicked.
-    """
-    clicked = Signal(int)
-
-    def __init__(self, index1, path1, index2=None, path2=None, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setLineWidth(2)
-        self.setObjectName("ThumbnailPairFrame")
-        self.setMinimumHeight(120)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        self.index1 = index1
-        self.path1 = path1
-        self.index2 = index2
-        self.path2 = path2
-        self.is_selected = False
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
-
-        self.thumb_label1 = QLabel()
-        self.thumb_label1.setObjectName("ThumbnailLabel")
-        self.thumb_label1.setAlignment(Qt.AlignCenter)
-        self.thumb_label1.setFixedSize(90, 110)
-        self.thumb_label1.setText(str(self.index1 + 1))
-        layout.addWidget(self.thumb_label1)
-
-        if self.index2 is not None:
-            self.thumb_label2 = QLabel()
-            self.thumb_label2.setObjectName("ThumbnailLabel")
-            self.thumb_label2.setAlignment(Qt.AlignCenter)
-            self.thumb_label2.setFixedSize(90, 110)
-            self.thumb_label2.setText(str(self.index2 + 1))
-            layout.addWidget(self.thumb_label2)
-        else:
-            self.thumb_label2 = None
-
-    def set_pixmap1(self, pixmap):
-        # The pixmap is now pre-scaled by the worker. Just set it.
-        self.thumb_label1.setPixmap(pixmap)
-
-    def set_pixmap2(self, pixmap):
-        if self.thumb_label2:
-            # The pixmap is now pre-scaled by the worker. Just set it.
-            self.thumb_label2.setPixmap(pixmap)
-
-    def set_selected(self, selected):
-        self.is_selected = selected
-        # This property is used by the stylesheet selector QFrame#ThumbnailPairFrame:selected
-        self.setProperty("selected", selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
-
-    def mousePressEvent(self, event):
-        self.clicked.emit(self.index1)
-        super().mousePressEvent(event)
-
-
-class ThumbnailListWidget(QScrollArea):
-    """
-    A scrollable list of thumbnail pairs that intelligently updates
-    without rebuilding the entire list from scratch on every change.
-    """
-    pair_selected = Signal(int)
-    request_thumbnail = Signal(int, str) # index, path
+class ThumbnailDelegate(QStyledItemDelegate):
+    THUMB_WIDTH = 90
+    THUMB_HEIGHT = 110
+    PAIR_HEIGHT = 120 # 110px thumb + 10px vertical margin
+    SPACING = 5       # Horizontal spacing
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWidgetResizable(True)
+        app_config = config.load_config()
+        theme_name = app_config.get("theme", "Material Dark")
+        self.theme = config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+
+        self.color_selected = QColor(self.theme['PRIMARY_CONTAINER'])
+        self.color_frame_border = QColor(self.theme['OUTLINE'])
+        self.color_thumb_bg = QColor(self.theme['SURFACE_CONTAINER'])
+        self.color_thumb_text = QColor(self.theme['ON_SURFACE_VARIANT'])
+
+    def sizeHint(self, option, index):
+        """All items have a fixed size."""
+        # Width accommodates 2 thumbnails + 3 spacing gaps
+        width = (self.THUMB_WIDTH * 2) + (self.SPACING * 3)
+        return QSize(width, self.PAIR_HEIGHT)
+
+    def paint(self, painter, option, index):
+        """This is the main drawing function."""
+        painter.setRenderHint(QPainter.Antialiasing)
+        # --- 1. Get Data ---
+        is_selected = index.data(ROLE_IS_SELECTED)
+        scanner_mode = index.data(ROLE_SCANNER_MODE)
+        # --- 2. Draw Background (Selection) ---
+        if is_selected:
+            # Use the style's selection color
+            painter.fillRect(option.rect, self.color_selected)
+        # --- 3. Draw Main Frame Border ---
+        # Adjust rect for our 10px vertical spacing
+        frame_rect = QRect(option.rect).adjusted(0, 0, 0, -10)
+        painter.setPen(self.color_frame_border)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(frame_rect, 8, 8)
+        # --- 4. Calculate Thumbnail Positions ---
+        thumb1_rect = QRect(
+            frame_rect.left() + self.SPACING,
+            frame_rect.top() + (frame_rect.height() - self.THUMB_HEIGHT) // 2,
+            self.THUMB_WIDTH,
+            self.THUMB_HEIGHT
+        )
+        thumb2_rect = QRect(
+            thumb1_rect.right() + self.SPACING,
+            thumb1_rect.top(),
+            self.THUMB_WIDTH,
+            self.THUMB_HEIGHT
+        )
+        # --- 5. Draw Thumbnails ---
+        self.draw_thumbnail(painter, option, index, thumb1_rect, "left")
+        # Only draw second thumb if in split-mode OR dual-scan with a valid path
+        if scanner_mode == "single_split":
+            self.draw_thumbnail(painter, option, index, thumb2_rect, "right")
+        elif index.data(ROLE_PATH_2): # Dual-scan and path2 is not None
+            self.draw_thumbnail(painter, option, index, thumb2_rect, "right")
+
+    def draw_thumbnail(self, painter, option, index, thumb_rect, side):
+        """Helper to draw a single thumbnail (or its placeholder)."""
+        if side == "left":
+            pixmap = index.data(ROLE_PIXMAP_1)
+            role_index = ROLE_INDEX_1
+            role_path = ROLE_PATH_1
+            role_is_loading = ROLE_IS_LOADING_1
+        else:
+            pixmap = index.data(ROLE_PIXMAP_2)
+            role_index = ROLE_INDEX_2
+            role_path = ROLE_PATH_2
+            role_is_loading = ROLE_IS_LOADING_2
+
+        if pixmap:
+            # Pixmap is loaded, draw it
+            painter.drawPixmap(thumb_rect, pixmap)
+        else:
+            # Pixmap not loaded, draw placeholder
+            painter.fillRect(thumb_rect, self.color_thumb_bg)
+            # Draw text
+            if index.data(ROLE_SCANNER_MODE) == "single_split":
+                text = f"{index.data(ROLE_INDEX_1) + 1} {'L' if side == 'left' else 'R'}"
+            else:
+                text = str(index.data(role_index) + 1)
+            painter.setPen(self.color_thumb_text)
+            painter.drawText(thumb_rect, Qt.AlignCenter, text)
+            # --- Asynchronous Load Trigger ---
+            is_loading = index.data(role_is_loading)
+            if not is_loading:
+                # We are in paint(), so this item is visible. Request its thumbnail.
+                parent_view = self.parent() # This is the ThumbnailListWidget
+                path = index.data(role_path)
+                if index.data(ROLE_SCANNER_MODE) == "single_split":
+                    parent_view.request_split_thumbnail.emit(index, side, path)
+                else:
+                    parent_view.request_thumbnail.emit(index, path)
+                # Mark as loading so we don't spam requests every paint event
+                parent_view.model().setData(index, True, role_is_loading)
+
+
+class ThumbnailListWidget(QListView):
+    """
+    A virtualized list view for displaying thumbnail pairs.
+    Replaces the QScrollArea implementation for performance.
+    """
+    # Emits the *pair index*
+    pair_selected = Signal(int)
+    # Signals to request thumbnails from the worker
+    # We pass the QModelIndex as a stable reference to the item
+    request_thumbnail = Signal(QModelIndex, str) # index, path (for dual_scan)
+    request_split_thumbnail = Signal(QModelIndex, str, str) # index, "left"|"right", source_path
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        app_config = config.load_config()
+        theme_name = app_config.get("theme", "Material Dark")
+        theme = config.THEMES.get(theme_name, config.THEMES["Material Dark"])
+
+        self.setViewMode(QListView.ViewMode.ListMode)
+        self.setFlow(QListView.Flow.TopToBottom)
+        self.setResizeMode(QListView.ResizeMode.Adjust) # Adjusts to width
+        self.setMovement(QListView.Movement.Static)
+        self.setUniformItemSizes(True) # CRITICAL for performance
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSpacing(10) # Space between pairs
+        self.setStyleSheet(f"background-color: {theme['FRAME_BG']}; border: none; padding: 10px;")
+        # Set the custom delegate (defined in Part 3)
+        self.delegate = ThumbnailDelegate(self)
+        self.setItemDelegate(self.delegate)
+        self.clicked.connect(self.on_item_clicked)
 
-        self.scroll_content = QWidget()
-        self.main_layout = QVBoxLayout(self.scroll_content)
-        self.main_layout.setAlignment(Qt.AlignTop)
-        self.main_layout.setContentsMargins(10, 10, 10, 10)
-        self.main_layout.setSpacing(10)
-        self.setWidget(self.scroll_content)
+    @Slot(QModelIndex)
+    def on_item_clicked(self, index):
+        """Internal slot to translate QListView's signal to our custom one."""
+        pair_index = index.data(ROLE_PAIR_INDEX)
+        self.pair_selected.emit(pair_index)
 
-        self.pair_widgets = {} # Using a dict {index: widget} for faster lookups
-        self.current_selected_index = -1
-        self._stretch_item = self.main_layout.addStretch()
+    def set_current_index(self, image_index):
+        """Finds and selects the pair matching the current image index."""
+        if not self.model():
+            return
+        for row in range(self.model().rowCount()):
+            index = self.model().index(row, 0)
+            idx1 = index.data(ROLE_INDEX_1)
+            idx2 = index.data(ROLE_INDEX_2)
+            is_match = (idx1 == image_index) or (idx2 == image_index and idx2 is not None)
+            if is_match:
+                self.setCurrentIndex(index)
+                # Ensure it's visible, scroll to center
+                self.scrollTo(index, QListView.ScrollHint.PositionAtCenter)
+                break
 
-    def sync(self, image_files):
+    @Slot(QModelIndex, str, QPixmap)
+    def on_thumbnail_loaded(self, index, side, pixmap):
         """
-        Synchronizes the thumbnail list with the provided list of image files,
-        only adding, removing, or updating widgets as necessary.
-        This version is optimized to be robust and visually seamless.
+        Public slot to receive a loaded thumbnail from the worker
+        and update the model.
         """
-        # --- Remove stretch item temporarily ---
-        if self._stretch_item:
-            self.main_layout.removeItem(self._stretch_item)
-
-        # Rebuilding is visually seamless due to thumbnail caching and is far
-        # more robust than complex patching logic. It avoids potential bugs with
-        # pairing logic when items are deleted from the middle of the list.
-        while self.main_layout.count():
-            child = self.main_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        self.pair_widgets.clear()
-        
-        # --- Re-Pairing Logic ---
-        i = 0
-        is_odd = len(image_files) % 2 != 0
-        if is_odd and i < len(image_files):
-            path = image_files[i]
-            pair_widget = ThumbnailPairWidget(i, path)
-            pair_widget.clicked.connect(self.on_pair_clicked)
-            self.main_layout.addWidget(pair_widget)
-            self.pair_widgets[i] = pair_widget
-            self.request_thumbnail.emit(i, path)
-            i += 1
-        
-        while i < len(image_files) - 1:
-            idx1, path1 = i, image_files[i]
-            idx2, path2 = i + 1, image_files[i + 1]
-            pair_widget = ThumbnailPairWidget(idx1, path1, idx2, path2)
-            pair_widget.clicked.connect(self.on_pair_clicked)
-            self.main_layout.addWidget(pair_widget)
-            self.pair_widgets[idx1] = pair_widget
-            
-            self.request_thumbnail.emit(idx1, path1)
-            self.request_thumbnail.emit(idx2, path2)
-            i += 2
-            
-        # --- Re-add stretch item ---
-        self._stretch_item = self.main_layout.addStretch()
-        # Re-apply selection to the newly created widgets
-        self.set_current_index(self.current_selected_index)
-
-    @Slot(int, str, QPixmap)
-    def on_thumbnail_loaded(self, index, path, pixmap):
-        if pixmap.isNull(): return
-        
-        # Find the correct widget to update.
-        # This logic correctly finds the widget whether the thumbnail
-        # is the first or second image in its pair.
-        widget_to_update = None
-        if index in self.pair_widgets:
-            widget_to_update = self.pair_widgets[index]
-        elif (index > 0) and (index % 2 != 0) and ((index - 1) in self.pair_widgets):
-             # This handles the second image in a pair
-            widget_to_update = self.pair_widgets[index - 1]
-
-        if widget_to_update:
-            if widget_to_update.index1 == index:
-                widget_to_update.set_pixmap1(pixmap)
-            elif widget_to_update.index2 == index:
-                widget_to_update.set_pixmap2(pixmap)
-
-    @Slot(int)
-    def on_pair_clicked(self, index):
-        self.set_current_index(index)
-        self.pair_selected.emit(index)
-
-    def set_current_index(self, index):
-        if not self.pair_widgets: return
-        
-        self.current_selected_index = index
-        selected_widget = None
-        
-        for key_index, pair_widget in self.pair_widgets.items():
-            is_part_of_pair = (
-                pair_widget.index1 == index or 
-                (pair_widget.index2 is not None and pair_widget.index2 == index)
-            )
-            pair_widget.set_selected(is_part_of_pair)
-            if is_part_of_pair:
-                selected_widget = pair_widget
-        
-        if selected_widget:
-            # Use a QTimer to ensure scrolling happens after the UI has updated,
-            # which is more reliable.
-            QTimer.singleShot(50, lambda: self.ensureWidgetVisible(selected_widget, 50, 50))
-
+        if not index.isValid() or not self.model():
+            return
+        if side == "left":
+            self.model().setData(index, pixmap, ROLE_PIXMAP_1)
+            self.model().setData(index, False, ROLE_IS_LOADING_1)
+        elif side == "right":
+            self.model().setData(index, pixmap, ROLE_PIXMAP_2)
+            self.model().setData(index, False, ROLE_IS_LOADING_2)

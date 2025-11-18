@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QProgressDialog, QProgressBar, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Slot, QSize, QTimer, QPointF
-from PySide6.QtGui import QIcon, QPixmap, QColor
+from PySide6.QtGui import QIcon, QPixmap, QColor, QStandardItemModel, QStandardItem
 
 # Added for memory monitoring (Issue 7.1 Fix)
 try:
@@ -27,6 +27,11 @@ from image_viewer import ImageViewer, InteractionMode
 from workers import ScanWorker, Watcher, ImageProcessor, natural_sort_key
 from settings_dialog import SettingsDialog
 from log_viewer_dialog import LogViewerDialog
+from thumbnail_widgets import (
+    ThumbnailListWidget, ROLE_PAIR_INDEX, ROLE_SCANNER_MODE, ROLE_IS_SELECTED,
+    ROLE_PATH_1, ROLE_INDEX_1, ROLE_IS_LOADING_1, ROLE_PATH_2, ROLE_INDEX_2,
+    ROLE_IS_LOADING_2
+)
 from ui_modes.dual_scan_mode import DualScanModeWidget
 from ui_modes.single_split_mode import SingleSplitModeWidget
 
@@ -170,6 +175,8 @@ class MainWindow(QMainWindow):
         self.jump_button_animation.timeout.connect(self._update_jump_button_animation)
         self.jump_button_animation_step = 0
         
+        self.thumbnail_model = QStandardItemModel(self)
+
         self.setup_ui()
         self.setup_workers()
         self.connect_signals()
@@ -359,6 +366,14 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(stats_group)
         sidebar_layout.addWidget(book_group)
         sidebar_layout.addWidget(today_group)
+
+        thumbnail_group = QGroupBox("Thumbnails")
+        thumbnail_layout = QVBoxLayout(thumbnail_group)
+        self.thumbnail_panel = ThumbnailListWidget()
+        self.thumbnail_panel.setModel(self.thumbnail_model)
+        thumbnail_layout.addWidget(self.thumbnail_panel)
+        sidebar_layout.addWidget(thumbnail_group)
+
         sidebar_layout.addStretch()
         sidebar_layout.addWidget(settings_btn)
 
@@ -498,7 +513,13 @@ class MainWindow(QMainWindow):
         
         # ImageProcessor signals
         self.image_processor.processing_complete.connect(self.on_processing_complete)
+        self.image_processor.thumbnail_ready.connect(self.thumbnail_panel.on_thumbnail_loaded)
         self.image_processor.error.connect(self.show_error)
+
+        # Thumbnail panel signals
+        self.thumbnail_panel.pair_selected.connect(self._on_thumbnail_clicked)
+        self.thumbnail_panel.request_thumbnail.connect(self.image_processor.on_request_thumbnail)
+        self.thumbnail_panel.request_split_thumbnail.connect(self.image_processor.on_request_split_thumbnail)
 
         # Mode-specific viewer connections
         if isinstance(self.current_ui_mode, DualScanModeWidget):
@@ -537,7 +558,63 @@ class MainWindow(QMainWindow):
             self.watcher.file_renamed.connect(lambda old, new: self.on_file_system_change("renamed", (old, new)))
             self.watcher.error.connect(self.show_error)
             self.watcher.finished.connect(self.watcher.thread.quit)
-            
+
+    def sync_thumbnail_list(self):
+        self.thumbnail_model.clear()
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        if scanner_mode == "single_split":
+            for i, path in enumerate(self.image_files):
+                item = QStandardItem()
+                item.setData(i, ROLE_PAIR_INDEX)
+                item.setData(scanner_mode, ROLE_SCANNER_MODE)
+                item.setData(i == self.current_index, ROLE_IS_SELECTED)
+                # In split mode, both "sides" use the same source path and index
+                item.setData(path, ROLE_PATH_1)
+                item.setData(i, ROLE_INDEX_1)
+                item.setData(False, ROLE_IS_LOADING_1)
+                item.setData(path, ROLE_PATH_2)
+                item.setData(i, ROLE_INDEX_2)
+                item.setData(False, ROLE_IS_LOADING_2)
+                self.thumbnail_model.appendRow(item)
+        else:
+            # Dual Scan Mode Logic
+            pair_index = 0
+            i = 0
+            is_odd = len(self.image_files) % 2 != 0
+            while i < len(self.image_files):
+                item = QStandardItem()
+                item.setData(pair_index, ROLE_PAIR_INDEX)
+                item.setData(scanner_mode, ROLE_SCANNER_MODE)
+                path1 = self.image_files[i]
+                item.setData(path1, ROLE_PATH_1)
+                item.setData(i, ROLE_INDEX_1)
+                item.setData(False, ROLE_IS_LOADING_1)
+                is_selected = (i == self.current_index)
+                path2 = None
+                if (i + 1) < len(self.image_files):
+                    # This is a standard pair
+                    path2 = self.image_files[i+1]
+                    item.setData(path2, ROLE_PATH_2)
+                    item.setData(i + 1, ROLE_INDEX_2)
+                    item.setData(False, ROLE_IS_LOADING_2)
+                    is_selected = is_selected or ((i + 1) == self.current_index)
+                    i += 2
+                else:
+                    # This is the last odd image
+                    i += 1
+                item.setData(is_selected, ROLE_IS_SELECTED)
+                self.thumbnail_model.appendRow(item)
+                pair_index += 1
+
+    @Slot(int)
+    def _on_thumbnail_clicked(self, pair_index):
+        scanner_mode = self.app_config.get("scanner_mode", "dual_scan")
+        if scanner_mode == "single_split":
+            self.current_index = pair_index
+        else:
+            self.current_index = pair_index * 2
+        self.update_display()
+
     @Slot(str, object) # path can be string or tuple (old_path, new_path)
     def on_file_system_change(self, change_type, path):
         """Handles specific file system events for differential updates (Issue 2.2 Fix)"""
@@ -558,6 +635,7 @@ class MainWindow(QMainWindow):
                     self.current_index = max(0, self.current_index - step)
                 
                 self.update_display(force_reload=True)
+                self.sync_thumbnail_list()
                 self.pending_card.set_value(str(self._get_pending_page_count()))
         
         elif change_type == "renamed":
@@ -593,6 +671,7 @@ class MainWindow(QMainWindow):
 
         force_reload = getattr(self, '_force_reload_on_next_scan', False)
         self.update_display(force_reload=force_reload)
+        self.sync_thumbnail_list()
         self._force_reload_on_next_scan = False
         
         self.pending_card.set_value(str(self._get_pending_page_count()))
@@ -748,6 +827,9 @@ class MainWindow(QMainWindow):
 
             self.viewer1['toolbar'].setEnabled(path1 is not None)
             self.viewer2['toolbar'].setEnabled(path2 is not None)
+
+        if hasattr(self, 'thumbnail_panel'):
+            self.thumbnail_panel.set_current_index(self.current_index)
 
     @Slot()
     def update_scan_speed(self):
