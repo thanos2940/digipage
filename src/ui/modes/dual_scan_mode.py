@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QFrame, QToolButton, QSpacerItem, QSizePolicy, QStackedWidget, QMessageBox
 )
 from PySide6.QtCore import Slot, Signal
+from PySide6.QtGui import QImage
 from core.config_service import ConfigService
 from core.constants import THEMES
 from ..image_viewer import ImageViewer
@@ -152,11 +153,11 @@ class DualScanMode(BaseModeWidget):
         self.viewer1_panel['toolbar'].setEnabled(path1 is not None)
         self.viewer2_panel['toolbar'].setEnabled(path2 is not None)
 
-    def on_image_loaded(self, path, pixmap):
+    def on_image_loaded(self, path, q_image):
         if self.viewer1_panel['viewer'].image_path == path:
-            self.viewer1_panel['viewer'].on_image_loaded(path, pixmap)
+            self.viewer1_panel['viewer'].on_image_loaded(path, q_image)
         if self.viewer2_panel['viewer'].image_path == path:
-            self.viewer2_panel['viewer'].on_image_loaded(path, pixmap)
+            self.viewer2_panel['viewer'].on_image_loaded(path, q_image)
 
     def get_visible_paths(self):
         paths = []
