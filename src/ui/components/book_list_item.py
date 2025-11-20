@@ -1,55 +1,48 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
-from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt
-from ...core import config
+from ...core.theme import MODERN_THEME
 
-class BookListItemWidget(QWidget):
-    def __init__(self, name, status, pages, theme, parent=None):
+class BookListItemWidget(QFrame):
+    def __init__(self, name, status, pages, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(50)
-
-        # Main layout with a subtle bottom border for separation
+        self.setObjectName("BookItem")
+        # Transparent background for list items usually, but let's make it subtle
         self.setStyleSheet(f"""
-            QWidget {{
-                border-bottom: 1px solid {theme['OUTLINE']};
+            #BookItem {{
+                background-color: transparent;
+                border-bottom: 1px solid {MODERN_THEME['BORDER']};
             }}
         """)
+        self.setFixedHeight(45)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(15)
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(10)
 
-        name_label = QLabel(name)
-        status_label = QLabel(status)
-        pages_label = QLabel(f"{pages} σελ.")
+        # Book Name
+        self.name_label = QLabel(name)
+        self.name_label.setStyleSheet(f"font-weight: 600; color: {MODERN_THEME['TEXT_MAIN']};")
 
-        # --- Style Book Name ---
-        name_label.setStyleSheet(f"border: none; color: {theme['ON_SURFACE']}; background-color: transparent; font-weight: bold;")
+        # Status Badge
+        self.status_label = QLabel(status)
+        status_bg = MODERN_THEME['SUCCESS'] if status == "DATA" else MODERN_THEME['WARNING']
+        status_text = "#000000" if status == "DATA" else "#000000" # Dark text for contrast on bright badges
 
-        # --- Style Status Pill ---
-        status_color = theme['SUCCESS'] if status == "DATA" else theme['WARNING']
-        # Convert hex to rgba for background with transparency
-        rgb_color = QColor(status_color).getRgb()
-        bg_color_rgba = f"rgba({rgb_color[0]}, {rgb_color[1]}, {rgb_color[2]}, 40)" # ~15% opacity
-
-        status_stylesheet = f"""
-            border: none;
-            color: {status_color};
-            background-color: {bg_color_rgba};
-            padding: 4px 10px;
-            border-radius: 11px;
-            font-weight: bold;
+        self.status_label.setStyleSheet(f"""
+            background-color: {status_bg};
+            color: {status_text};
+            padding: 2px 8px;
+            border-radius: 10px;
             font-size: 8pt;
-        """
-        status_label.setStyleSheet(status_stylesheet)
-        status_label.setAlignment(Qt.AlignCenter)
+            font-weight: 700;
+        """)
+        self.status_label.setAlignment(Qt.AlignCenter)
 
-        # --- Style Page Count ---
-        page_count_color = config.lighten_color(theme['PRIMARY'], 0.2)
-        pages_label.setStyleSheet(f"border: none; font-weight: bold; color: {page_count_color}; font-size: 11pt; background-color: transparent;")
-        pages_label.setAlignment(Qt.AlignRight)
+        # Page Count
+        self.pages_label = QLabel(f"{pages} p.")
+        self.pages_label.setStyleSheet(f"color: {MODERN_THEME['TEXT_SECONDARY']}; font-size: 9pt;")
+        self.pages_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        layout.addWidget(name_label, 1)
-        layout.addStretch(1)
-        layout.addWidget(status_label)
-        layout.addWidget(pages_label)
+        layout.addWidget(self.name_label, 1)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.pages_label)
