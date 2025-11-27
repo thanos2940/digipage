@@ -1,6 +1,9 @@
 import os
 import json
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QStackedWidget,
+    QLabel, QSpacerItem, QSizePolicy, QToolButton
+)
 from PySide6.QtCore import Slot, QTimer
 
 import config
@@ -53,6 +56,14 @@ class SingleSplitModeWidget(QWidget):
         toolbar.setFixedHeight(60)
         toolbar_layout = QHBoxLayout(toolbar)
 
+        self.controls_stack = QStackedWidget()
+        toolbar_layout.addWidget(self.controls_stack)
+
+        # --- Normal Controls ---
+        normal_controls_page = QWidget()
+        normal_layout = QHBoxLayout(normal_controls_page)
+        normal_layout.setContentsMargins(0, 0, 0, 0)
+
         self.update_button = QPushButton("Ενημέρωση Layout")
         self.update_button.setToolTip("Αποθηκεύει τις τρέχουσες θέσεις των πλαισίων και ενημερώνει τις εικόνες στο φάκελο 'final'.")
         self.update_button.setProperty("class", "filled success")
@@ -62,11 +73,33 @@ class SingleSplitModeWidget(QWidget):
         self.left_page_toggle = self._create_toggle_button("Αριστερή Σελίδα")
         self.right_page_toggle = self._create_toggle_button("Δεξιά Σελίδα")
 
-        toolbar_layout.addStretch()
-        toolbar_layout.addWidget(self.left_page_toggle)
-        toolbar_layout.addWidget(self.update_button)
-        toolbar_layout.addWidget(self.right_page_toggle)
-        toolbar_layout.addStretch()
+        self.rotate_left_button = QToolButton(); self.rotate_left_button.setText("⟲ Αριστερά"); self.rotate_left_button.setMinimumHeight(40)
+        self.rotate_right_button = QToolButton(); self.rotate_right_button.setText("Δεξιά ⟳"); self.rotate_right_button.setMinimumHeight(40)
+
+        normal_layout.addStretch()
+        normal_layout.addWidget(self.left_page_toggle)
+        normal_layout.addWidget(self.rotate_left_button)
+        normal_layout.addWidget(self.update_button)
+        normal_layout.addWidget(self.rotate_right_button)
+        normal_layout.addWidget(self.right_page_toggle)
+        normal_layout.addStretch()
+        self.controls_stack.addWidget(normal_controls_page)
+
+        # --- Rotate Controls ---
+        rotate_controls_page = QWidget()
+        rotate_layout = QHBoxLayout(rotate_controls_page)
+        rotate_layout.setContentsMargins(0, 0, 0, 0)
+        rotate_layout.setSpacing(10)
+
+        self.rotate_mode_label = QLabel("ΠΕΡΙΣΤΡΟΦΗ")
+        self.cancel_rotate_button = QPushButton("Τέλος"); self.cancel_rotate_button.setProperty("class", "destructive")
+
+        rotate_layout.addStretch()
+        rotate_layout.addWidget(self.rotate_mode_label)
+        rotate_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Fixed, QSizePolicy.Minimum))
+        rotate_layout.addWidget(self.cancel_rotate_button)
+        rotate_layout.addStretch()
+        self.controls_stack.addWidget(rotate_controls_page)
 
         main_layout.addWidget(self.viewer)
         main_layout.addWidget(toolbar)
@@ -75,6 +108,28 @@ class SingleSplitModeWidget(QWidget):
         self.viewer.layout_changed.connect(self.on_layout_changed)
         self.update_button.clicked.connect(self.on_update_clicked)
         self.viewer.image_loaded_for_layout.connect(self.on_viewer_ready_for_layout)
+        self.rotate_left_button.clicked.connect(lambda: self.toggle_rotate_mode('left', True))
+        self.rotate_right_button.clicked.connect(lambda: self.toggle_rotate_mode('right', True))
+        self.cancel_rotate_button.clicked.connect(self.on_cancel_rotate)
+        self.viewer.rotation_changed_by_drag.connect(self.on_rotation_drag_finished)
+
+
+    def on_rotation_drag_finished(self):
+        self.on_update_clicked()
+
+    def toggle_rotate_mode(self, page, enabled):
+        self.viewer.set_page_split_rotating_mode(page, enabled)
+        if enabled:
+            self.controls_stack.setCurrentIndex(1)
+        else:
+            self.controls_stack.setCurrentIndex(0)
+            # After finishing rotation, trigger an update
+            self.on_update_clicked()
+
+    def on_cancel_rotate(self):
+        page = self.viewer.rotating_page
+        if page:
+            self.toggle_rotate_mode(page, False)
 
     def is_work_in_progress(self):
         """Returns True if the user is editing or has unsaved changes."""
@@ -99,8 +154,6 @@ class SingleSplitModeWidget(QWidget):
             # Force style re-application
             button.style().unpolish(button)
             button.style().polish(button)
-        # When a toggle is clicked, it's an edit, so enable the update button
-        self.on_layout_changed()
 
     def _on_toggle_clicked(self):
         """
@@ -109,6 +162,7 @@ class SingleSplitModeWidget(QWidget):
         and triggers the worker to create or delete the cropped image file.
         """
         self._update_toggle_styles()
+        self.on_layout_changed(immediate_update=True)
 
         if not self._current_image_path:
             return
@@ -130,6 +184,10 @@ class SingleSplitModeWidget(QWidget):
         current_layout['left_enabled'] = self.left_page_toggle.isChecked()
         current_layout['right_enabled'] = self.right_page_toggle.isChecked()
 
+        # Ensure rotation values are present
+        current_layout.setdefault('rotation_left', 0.0)
+        current_layout.setdefault('rotation_right', 0.0)
+
         # 1. Immediately update the viewer's UI to show/hide the crop rect
         self.viewer.set_layout_ratios(current_layout)
 
@@ -147,10 +205,15 @@ class SingleSplitModeWidget(QWidget):
 
 
 
-    def on_layout_changed(self):
-        """Activates the update button when the user starts editing."""
+    def on_layout_changed(self, immediate_update=False):
+        """
+        Activates the update button when the user starts editing.
+        If immediate_update is True, it also saves and processes the image.
+        """
         self.update_button.setEnabled(True)
         self.is_dirty = True
+        if immediate_update:
+            self.on_update_clicked()
 
     def on_update_clicked(self):
         """Saves the current layout and triggers the reprocessing of the image."""
@@ -164,6 +227,10 @@ class SingleSplitModeWidget(QWidget):
         # Add the toggle states to the layout data
         current_layout['left_enabled'] = self.left_page_toggle.isChecked()
         current_layout['right_enabled'] = self.right_page_toggle.isChecked()
+
+        # Ensure rotation values are carried over
+        current_layout.setdefault('rotation_left', 0.0)
+        current_layout.setdefault('rotation_right', 0.0)
 
         # 1. Save the new layout data for the *current* image
         self.save_layout_data(self._current_image_path, current_layout)
